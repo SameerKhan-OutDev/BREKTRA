@@ -11,6 +11,9 @@ export function emptyState(): State {
     jobs: [],
     drafts: [],
     activity: [],
+    settings: [{ id: "workspace", trainingCollection: false }],
+    trainingExamples: [],
+    trainingFeedback: [],
   };
 }
 export function profileUrl(value: string): string {
@@ -53,10 +56,16 @@ export function log(
     simulated,
     campaignId,
     leadId,
+    eventType: title === "Pitch ready for review" ? "pitch_review_required"
+      : kind === "review" && title !== "Draft saved" ? "review_decision"
+      : kind === "error" ? "essential_error" : undefined,
   };
   state.activity.unshift(event);
 }
 export function inWorkingHours(campaign: Campaign, date = new Date()): boolean {
+  if (campaign.startsAt && date.getTime() < Date.parse(campaign.startsAt))
+    return false;
+  if (campaign.scheduleMode === "continuous") return true;
   const hour = Number(
     new Intl.DateTimeFormat("en-GB", {
       hour: "2-digit",
@@ -100,7 +109,7 @@ export function eligible(
     return false;
   return true;
 }
-export function queueCampaign(state: State, campaign: Campaign) {
+export function queueCampaign(state: State, campaign: Campaign, retryFailed = true) {
   const demo =
     state.accounts.find((a) => a.id === campaign.accountId)?.status === "demo";
   let added = 0;
@@ -108,6 +117,9 @@ export function queueCampaign(state: State, campaign: Campaign) {
     (l) => l.sourceId === campaign.sourceId,
   )) {
     const kind = lead.relationship === "connected" ? "draft" : "request";
+    if (!retryFailed && state.jobs.some((j) =>
+      j.accountId === campaign.accountId && j.leadId === lead.id && j.kind === kind))
+      continue;
     if (!demo && kind === "request") continue;
     if (
       (campaign.mode === "requests" && kind !== "request") ||
@@ -145,8 +157,8 @@ export function outboundCount(
       j.kind !== "draft" &&
       (!kind || j.kind === kind) &&
       ["running", "simulated", "completed", "uncertain"].includes(j.status) &&
-      dayKey(j.updatedAt, campaign.timezone) ===
-        dayKey(date.toISOString(), campaign.timezone),
+      (j.status === "uncertain" || dayKey(j.intentAt ?? j.updatedAt, campaign.timezone) ===
+        dayKey(date.toISOString(), campaign.timezone)),
   ).length;
 }
 export function canDispatch(

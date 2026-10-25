@@ -2,7 +2,8 @@ import { readFile } from "node:fs/promises";
 import { createSign } from "node:crypto";
 import type { State } from "../shared/types.ts";
 import { emptyState } from "./domain.ts";
-const collections = {
+import { decodeRecord, encodeRecord, migrateState, validateState } from "./schema.ts";
+export const collections = {
   accounts: "Accounts",
   sources: "Sources",
   leads: "Relationships",
@@ -10,6 +11,9 @@ const collections = {
   jobs: "Jobs",
   drafts: "Drafts",
   activity: "Activity",
+  settings: "WorkspaceSettings",
+  trainingExamples: "TrainingExamples",
+  trainingFeedback: "TrainingFeedback",
 } as const;
 export const quoteTab = (tab: string) => `'${tab.replaceAll("'", "''")}'`;
 const b64 = (value: object) =>
@@ -17,7 +21,7 @@ const b64 = (value: object) =>
 export class Sheets {
   private token = "";
   private expiresAt = 0;
-  private rowCounts = new Map<string, number>();
+  private savedRows = new Map<string, string[][]>();
   private grids = new Map<
     string,
     { sheetId: number; rowCount: number; columnCount: number }
@@ -132,83 +136,91 @@ export class Sheets {
       await this.tabs(this.controlId);
     }
     const state = emptyState();
-    // Sequential reads avoid an unnecessary burst against per-user quotas.
+    const snapshot = await this.readControl();
     for (const [key, tab] of Object.entries(collections)) {
-      const data = await this.request(
-        `${this.controlId}/values/${encodeURIComponent(`${quoteTab(tab)}!A:B`)}`,
-      );
-      const rows = (data.values ?? []) as string[][];
-      this.rowCounts.set(tab, Math.max(1, rows.length));
+      const rows = snapshot.get(tab)!;
       if (rows.length && (rows[0][0] !== "id" || rows[0][1] !== "data"))
-        throw new Error(
-          `Control tab ${tab} has an unexpected schema. Use a dedicated control spreadsheet.`,
-        );
-      (state as any)[key] = rows
-        .slice(1)
-        .filter((r) => r[0])
-        .map((row) => {
-          try {
-            const value = JSON.parse(row[1]);
-            if (value.id !== row[0]) throw new Error();
-            return value;
-          } catch {
-            throw new Error(
-              `Invalid stored record in ${tab}. Fix the row before starting the runner.`,
-            );
-          }
-        });
+        throw new Error(`Control tab ${tab} has an unexpected schema. Use a dedicated control spreadsheet.`);
+      const records = rows.slice(1).flatMap((row, index) => {
+        if (!row[0] && !row[1]) return [];
+        if (!row[0] || !row[1]) throw new Error(`Incomplete record in ${tab}, row ${index + 2}. Correct it before reconnecting.`);
+        return [decodeRecord(row[1], row[0], tab, index + 2)];
+      });
+      if (key !== "settings" || records.length) (state as any)[key] = records;
     }
-    return state;
+    const validated = migrateState(state);
+    validated.activity.sort((a, b) => b.at.localeCompare(a.at));
+    this.savedRows = snapshot;
+    return validated;
+  }
+  private async readControl(): Promise<Map<string, string[][]>> {
+    const ranges = Object.values(collections).map((tab) => `ranges=${encodeURIComponent(`${quoteTab(tab)}!A:B`)}`).join("&");
+    const result = await this.request(`${this.controlId}/values:batchGet?${ranges}&valueRenderOption=UNFORMATTED_VALUE`);
+    if (result.valueRanges?.length !== Object.keys(collections).length)
+      throw new Error("Incomplete control spreadsheet response. Reconnect before saving.");
+    return new Map(Object.values(collections).map((tab, index) => {
+      const rows = (result.valueRanges[index].values ?? []).map((r: unknown[]) => [String(r[0] ?? ""), String(r[1] ?? "")]) as string[][];
+      while (rows.length && rows.at(-1)!.every((cell) => !cell)) rows.pop();
+      return [tab, rows];
+    }));
   }
   async save(state: State) {
-    const data = Object.entries(collections).map(([key, tab]) => {
+    validateState(state);
+    if (this.savedRows.size !== Object.keys(collections).length)
+      throw new Error("Load and validate the control spreadsheet before saving.");
+    // Only one computer may control a spreadsheet. Detect edits between our saves;
+    // this is a conflict check, not a cross-computer compare-and-swap lock.
+    const remote = await this.readControl();
+    for (const [tab, rows] of remote)
+      if (JSON.stringify(rows) !== JSON.stringify(this.savedRows.get(tab)))
+        throw new Error(`Control tab ${tab} changed outside this process. Dispatch paused. Reconnect to load its current records.`);
+    const requests: object[] = [];
+    const next = new Map<string, string[][]>();
+    const grown: { grid: { rowCount: number }; needed: number }[] = [];
+    for (const [key, tab] of Object.entries(collections)) {
+      const previous = this.savedRows.get(tab)!;
+      const values = structuredClone(previous);
+      values[0] = ["id", "data"];
       const items = state[key as keyof State];
-      const values: string[][] = [
-        ["id", "data"],
-        ...items.map((item) => [item.id, JSON.stringify(item)]),
-      ];
-      // Blank trailing rows so deletions cannot return after a restart.
-      const target = Math.max(values.length, this.rowCounts.get(tab) ?? 1);
-      while (values.length < target) values.push(["", ""]);
-      return { range: `${quoteTab(tab)}!A1:B${target}`, values };
-    });
-    const growth = Object.entries(collections).flatMap(([key, tab]) => {
+      const ids = new Set(items.map((item) => item.id));
+      const positions = new Map(previous.slice(1).map((r, i) => [r[0], i + 1]));
+      for (let i = 1; i < values.length; i++)
+        if (!ids.has(values[i][0])) values[i] = ["", ""];
+      for (const item of items) {
+        let index = positions.get(item.id);
+        if (index === undefined) {
+          const free = values.findIndex((row, i) => i > 0 && !row[0]);
+          index = free < 0 ? values.length : free;
+        }
+        values[index] = [item.id, encodeRecord(item)];
+      }
       const grid = this.grids.get(`${this.controlId}:${tab}`);
-      if (!grid)
-        throw new Error(
-          "Control spreadsheet metadata is unavailable. Reconnect before saving.",
-        );
-      const needed = state[key as keyof State].length + 1;
-      return needed > grid.rowCount
-        ? [
-            {
-              appendDimension: {
-                sheetId: grid.sheetId,
-                dimension: "ROWS",
-                length: needed - grid.rowCount,
-              },
-            },
-          ]
-        : [];
-    });
-    if (growth.length) {
-      await this.request(`${this.controlId}:batchUpdate`, {
-        method: "POST",
-        body: JSON.stringify({ requests: growth }),
-      });
-      await this.tabs(this.controlId);
+      if (!grid || grid.columnCount < 2) throw new Error(`Control tab ${tab} metadata is unavailable. Reconnect before saving.`);
+      if (values.length > grid.rowCount) {
+        requests.push({ appendDimension: { sheetId: grid.sheetId, dimension: "ROWS", length: values.length - grid.rowCount } });
+        grown.push({ grid, needed: values.length });
+      }
+      // Group adjacent changed rows. Deletions clear only our two value cells.
+      for (let i = 0; i < values.length;) {
+        if (JSON.stringify(values[i]) === JSON.stringify(previous[i])) { i++; continue; }
+        const start = i++;
+        while (i < values.length && JSON.stringify(values[i]) !== JSON.stringify(previous[i])) i++;
+        requests.push({ updateCells: {
+          start: { sheetId: grid.sheetId, rowIndex: start, columnIndex: 0 },
+          rows: values.slice(start, i).map((row) => ({ values: row.map((cell) => ({ userEnteredValue: { stringValue: cell } })) })),
+          fields: "userEnteredValue",
+        } });
+      }
+      while (values.length && values.at(-1)!.every((cell) => !cell)) values.pop();
+      next.set(tab, values);
     }
-    await this.request(`${this.controlId}/values:batchUpdate`, {
-      method: "POST",
-      body: JSON.stringify({ valueInputOption: "RAW", data }),
+    if (!requests.length) return;
+    // One atomic batch commits intent, audit events and examples together. Never
+    // retry an ambiguous write; Store blocks dispatch until a fresh reconciliation.
+    await this.request(`${this.controlId}:batchUpdate`, {
+      method: "POST", body: JSON.stringify({ requests }),
     });
-    for (const [key, tab] of Object.entries(collections))
-      this.rowCounts.set(
-        tab,
-        Math.max(
-          this.rowCounts.get(tab) ?? 1,
-          state[key as keyof State].length + 1,
-        ),
-      );
+    for (const { grid, needed } of grown) grid.rowCount = needed;
+    this.savedRows = next;
   }
 }

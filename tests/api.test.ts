@@ -54,6 +54,32 @@ test("local API supports the campaign / review workflow and rejects invalid or c
     const initial = (await request("/api/workspace")).body as Workspace;
     assert.equal(initial.health.mode, "demo");
     assert.equal(initial.health.linkedin.connected, false);
+    await t.test("a second server cannot control the same workspace on another port", async () => {
+      const second = spawn(process.execPath, ["--import", "tsx", "server/index.ts", "--production"], {
+        cwd: process.cwd(), env: { ...process.env, PORT: "14312", STORAGE_MODE: "demo" }, windowsHide: true, stdio: "pipe",
+      });
+      let failure = "";
+      second.stderr.on("data", (b) => { failure += b; });
+      try {
+        const code = await new Promise<number | null>((resolve, reject) => {
+          second.once("exit", resolve);
+          second.once("error", reject);
+          setTimeout(() => reject(new Error("Second server did not reject workspace ownership")), 5000).unref();
+        });
+        assert.notEqual(code, 0);
+        assert.match(failure, /Another BREKTRA process/);
+        assert.equal((await request("/api/health")).body.pid, child.pid);
+      } finally { if (second.exitCode === null) second.kill(); }
+    });
+    await t.test("training collection is explicit, validated, and does not backfill old drafts", async () => {
+      assert.equal(initial.state.settings[0].trainingCollection, false);
+      assert.equal((await request("/api/settings/training", "PATCH", { enabled: "true" })).status, 400);
+      assert.equal((await request("/api/settings/training", "PATCH", { enabled: true })).status, 200);
+      const workspace = (await request("/api/workspace")).body as Workspace;
+      assert.equal(workspace.state.settings[0].trainingCollection, true);
+      assert.equal(workspace.state.trainingExamples.length, 0);
+      assert.equal((await request("/api/settings/training", "PATCH", { enabled: false })).status, 200);
+    });
     await t.test("portable launcher can identify the correct local app instance", async () => {
       const health = await request("/api/health");
       assert.equal(health.status, 200);
@@ -129,6 +155,26 @@ test("local API supports the campaign / review workflow and rejects invalid or c
         ).status,
         200,
       );
+    });
+    await t.test("continuous campaign saves context and requires a valid start time", async () => {
+      const fields = { ...initial.state.campaigns[0], name: "Continuous context test", company: "Example Co", pitchStyle: "direct", contextPrompt: "Use {{company}} and {{selling}} with a concise question.", pitchStrategy: "Lead with a relevant outcome, then ask for a call.", pitchSamples: "Hi, would a short conversation be useful?", scheduleMode: "continuous", startsAt: "2099-10-25T08:30:00Z", startHour: 18, endHour: 9 };
+      const created = await request("/api/campaigns", "POST", fields);
+      assert.equal(created.status, 201);
+      assert.equal(created.body.company, fields.company);
+      assert.equal(created.body.contextPrompt, fields.contextPrompt);
+      assert.equal(created.body.pitchStrategy, fields.pitchStrategy);
+      assert.equal(created.body.pitchSamples, fields.pitchSamples);
+      assert.equal(created.body.startsAt, fields.startsAt);
+      assert.ok(!("offer" in created.body));
+      assert.equal((await request("/api/campaigns", "POST", { ...fields, startsAt: "" })).status, 400);
+      assert.equal((await request("/api/campaigns", "POST", { ...fields, startsAt: "not-a-date" })).status, 400);
+      assert.equal((await request("/api/campaigns", "POST", { ...fields, scheduleMode: "scheduled" })).status, 400);
+      const updated = { ...fields, pitchStyle: "indirect", contextPrompt: "Edited context about {{selling}}", startsAt: "2099-11-01T09:15:00Z" };
+      assert.equal((await request(`/api/campaigns/${created.body.id}`, "PUT", updated)).status, 200);
+      const saved = (await request("/api/workspace")).body.state.campaigns.find((c: { id: string }) => c.id === created.body.id);
+      assert.equal(saved.contextPrompt, updated.contextPrompt);
+      assert.equal(saved.pitchStyle, updated.pitchStyle);
+      assert.equal(saved.startsAt, updated.startsAt);
     });
     await t.test(
       "review is editable, approval queues a demo pitch, and repeat approval is rejected",
@@ -215,6 +261,42 @@ test("local API supports the campaign / review workflow and rejects invalid or c
       const response = await fetch(`http://127.0.0.1:${port}`);
       assert.equal(response.status, 200);
       assert.match(await response.text(), /BREKTRA/);
+    });
+    await t.test("generation and human review records link once and preserve negative feedback", async () => {
+      const before = (await request("/api/workspace")).body as Workspace;
+      const campaign = before.state.campaigns.find((c) => c.name === "Updated campaign")!;
+      await request("/api/settings/training", "PATCH", { enabled: true });
+      await request(`/api/campaigns/${campaign.id}/status`, "POST", { status: "running" });
+      let example: Workspace["state"]["trainingExamples"][number] | undefined;
+      for (let i = 0; i < 100; i++) {
+        const workspace = (await request("/api/workspace")).body as Workspace;
+        example = workspace.state.trainingExamples.find((e) => e.draftId);
+        if (example) break;
+        await delay(100);
+      }
+      assert.ok(example?.draftId, "Runner did not capture a generated draft");
+      await request(`/api/campaigns/${campaign.id}/status`, "POST", { status: "paused" });
+      assert.equal(example.simulated, true);
+      const revised = "Hi, could we compare notes about your team's workflow?";
+      assert.equal((await request(`/api/drafts/${example.draftId}`, "PUT", { text: revised, status: "pending", reason: "Simpler wording" })).status, 200);
+      // Retrying the same body (including its reason) cannot duplicate feedback.
+      await request(`/api/drafts/${example.draftId}`, "PUT", { text: revised, status: "pending", reason: "Simpler wording" });
+      let state = (await request("/api/workspace")).body.state as Workspace["state"];
+      assert.equal(state.trainingFeedback.length, 1);
+      await request("/api/settings/training", "PATCH", { enabled: false });
+      await request(`/api/drafts/${example.draftId}`, "PUT", { text: `${revised} An extra edit.`, status: "pending" });
+      state = (await request("/api/workspace")).body.state;
+      assert.equal(state.trainingFeedback.length, 1);
+      await request("/api/settings/training", "PATCH", { enabled: true });
+      assert.equal((await request(`/api/drafts/${example.draftId}`, "PUT", { text: revised, status: "rejected", reason: "Not relevant" })).status, 200);
+      assert.equal((await request(`/api/drafts/${example.draftId}`, "PUT", { text: revised, status: "rejected" })).status, 400);
+      state = (await request("/api/workspace")).body.state;
+      assert.equal(state.trainingFeedback.length, 2);
+      assert.equal(state.trainingFeedback[1].decision, "rejected");
+      assert.equal(state.trainingFeedback[1].reason, "Not relevant");
+      assert.equal(state.trainingFeedback[1].exampleId, example.id);
+      assert.equal(state.trainingExamples.find((e) => e.id === example.id)!.original!.text, example.original!.text);
+      assert.ok(state.activity.some((e) => e.eventType === "pitch_review_required"));
     });
   } finally {
     child.kill();

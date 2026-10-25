@@ -1,5 +1,6 @@
 import type { State } from "../shared/types.ts";
 import { emptyState, leadId, now } from "./domain.ts";
+import { defaultContextPrompt, defaultPitchStrategy, defaultPitchSamples } from "../shared/campaign.ts";
 export function demoState(): State {
   const s = emptyState();
   s.accounts = [
@@ -108,7 +109,14 @@ export function demoState(): State {
       status: "draft",
       dailyLimit: 10,
       icp: "Founders and growth leaders at B2B software companies.",
-      offer: "We help small B2B teams simplify their outreach workflows.",
+      company: "BREKTRA",
+      selling: "We help small B2B teams simplify their outreach workflows.",
+      pitchStyle: "conversational",
+      contextPrompt: defaultContextPrompt,
+      pitchStrategy: defaultPitchStrategy,
+      pitchSamples: defaultPitchSamples,
+      scheduleMode: "scheduled",
+      startsAt: "",
       startHour: 0,
       endHour: 24,
       timezone: "Asia/Karachi",

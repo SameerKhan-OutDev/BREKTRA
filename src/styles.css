@@ -1764,6 +1764,24 @@ tbody tr:hover {
   gap: 23px;
   align-items: start;
 }
+.training-settings {
+  padding: 22px;
+  border-bottom: 1px solid #eef1f6;
+}
+.training-settings .panel-header {
+  padding: 0;
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+.training-settings .panel-header > div {
+  flex: 1 1 240px;
+}
+.training-settings > p {
+  font-size: 11px;
+  line-height: 1.6;
+  color: #718096;
+  margin-top: 14px;
+}
 .setup-card > .note {
   margin: 0 23px 23px;
 }
@@ -3077,4 +3095,13 @@ footer { font-size: 10px; }
   .mode-options strong { font-size: 11px; }
   .mode-options button > span { font-size: 9px; }
   footer { flex-wrap: wrap; font-size: 9px; }
+}
+
+.form-section-title {
+  margin: 8px 0 0;
+  padding-top: 18px;
+  border-top: 1px solid #e5ebf4;
+  font-size: 14px;
+  font-weight: 600;
+  color: #536c8d;
 }

@@ -56,6 +56,8 @@ import type {
   Workspace,
 } from "../shared/types";
 
+import { defaultContextPrompt, defaultPitchStrategy, defaultPitchSamples, pitchStyles } from "../shared/campaign";
+
 type Page =
   | "Dashboard"
   | "Campaigns"
@@ -1099,8 +1101,9 @@ function Campaigns({
                   </span>
                   <span>
                     <Clock3 size={15} />
-                    {String(c.startHour).padStart(2, "0")}:00–
-                    {String(c.endHour).padStart(2, "0")}:00 · {c.timezone}
+                    {c.scheduleMode === "continuous"
+                      ? `From ${new Date(c.startsAt).toLocaleString([], { timeZone: c.timezone })} · ${c.timezone} · until paused`
+                      : `${String(c.startHour).padStart(2, "0")}:00–${String(c.endHour).padStart(2, "0")}:00 · ${c.timezone}`}
                   </span>
                 </div>
                 <div className="campaign-progress">
@@ -1861,6 +1864,19 @@ function Settings({
       </div>
       <div className="settings-bottom">
         <section className="panel setup-card">
+          <div className="training-settings">
+          <div className="panel-header">
+            <div>
+              <h2>Future AI examples</h2>
+              <p>Save generation inputs, original drafts and future edits/review decisions in the control spreadsheet. No training or upload runs automatically. Earlier drafts have no reconstructed history. Demo examples stay labeled.</p>
+            </div>
+            <button className="button" disabled={busy} aria-pressed={s.settings[0].trainingCollection}
+              onClick={() => void action(() => api("/settings/training", "PATCH", { enabled: !s.settings[0].trainingCollection }), "Example collection preference saved.")}>
+              {s.settings[0].trainingCollection ? "Turn collection off" : "Enable collection"}
+            </button>
+          </div>
+          <p>{s.trainingExamples.length} captured examples. Collection is {s.settings[0].trainingCollection ? "on" : "off"}. {h.mode === "demo" ? "Demo data resets on restart." : "Saved privately in your control spreadsheet."} Inspection, deletion, retention and reviewed exports are planned.</p>
+          </div>
           <div className="panel-header">
             <div>
               <h2>Connect your real workspace</h2>
@@ -1873,7 +1889,7 @@ function Settings({
               <strong>Create a dedicated control spreadsheet</strong>
               <p>
                 The app creates Accounts, Sources, Campaigns, Relationships,
-                Jobs, Drafts, and Activity tabs. Keep this separate from your
+                Jobs, Drafts, Activity, WorkspaceSettings, TrainingExamples and TrainingFeedback tabs. Keep this separate from your
                 existing lead sheets.
               </p>
             </li>
@@ -1979,7 +1995,16 @@ function CampaignForm({
     sourceId: campaign?.sourceId || s.sources[0]?.id || "",
     dailyLimit: campaign?.dailyLimit || 10,
     icp: campaign?.icp || "",
-    offer: campaign?.offer || "",
+    company: campaign?.company || "",
+    selling: campaign?.selling || "",
+    pitchStyle: campaign?.pitchStyle || "conversational",
+    contextPrompt: campaign?.contextPrompt ?? defaultContextPrompt,
+    pitchStrategy: campaign?.pitchStrategy ?? defaultPitchStrategy,
+    pitchSamples: campaign?.pitchSamples ?? defaultPitchSamples,
+    scheduleMode: campaign?.scheduleMode || "scheduled",
+    startsAt: campaign?.startsAt
+      ? new Date(Date.parse(campaign.startsAt) - new Date(campaign.startsAt).getTimezoneOffset() * 60000).toISOString().slice(0, 16)
+      : "",
     startHour: campaign?.startHour ?? 9,
     endHour: campaign?.endHour ?? 18,
     timezone: campaign?.timezone || "Asia/Karachi",
@@ -1994,7 +2019,7 @@ function CampaignForm({
         api(
           campaign ? `/campaigns/${campaign.id}` : "/campaigns",
           campaign ? "PUT" : "POST",
-          data,
+          { ...data, startsAt: data.startsAt ? new Date(data.startsAt).toISOString() : "" },
         ),
       campaign
         ? "Campaign updated."
@@ -2111,30 +2136,67 @@ function CampaignForm({
                 </select>
               </label>
             </div>
+            <h3 className="form-section-title">Context</h3>
             <label className="field">
-              <span>Ideal customer profile</span>
-              <textarea
-                required
-                minLength={5}
-                maxLength={2000}
-                rows={2}
+              <span>Company</span>
+              <textarea required maxLength={2000} rows={2}
+                placeholder="Your company name and what it does"
+                value={data.company} onChange={(e) => update("company", e.target.value)} />
+            </label>
+            <label className="field">
+              <span>Ideal customer profile (ICP)</span>
+              <textarea required minLength={5} maxLength={2000} rows={2}
                 placeholder="Who do you want to reach? Roles, industry, company stage…"
-                value={data.icp}
-                onChange={(e) => update("icp", e.target.value)}
-              />
+                value={data.icp} onChange={(e) => update("icp", e.target.value)} />
             </label>
             <label className="field">
-              <span>Your offer</span>
-              <textarea
-                required
-                minLength={5}
-                maxLength={2000}
-                rows={2}
-                placeholder="What do you help these people achieve?"
-                value={data.offer}
-                onChange={(e) => update("offer", e.target.value)}
-              />
+              <span>What we're selling</span>
+              <textarea required minLength={5} maxLength={2000} rows={2}
+                placeholder="Describe the product or service and the outcome it helps achieve"
+                value={data.selling} onChange={(e) => update("selling", e.target.value)} />
             </label>
+            <label className="field">
+              <span>Pitch style</span>
+              <select value={data.pitchStyle} onChange={(e) => update("pitchStyle", e.target.value)}>
+                {Object.entries(pitchStyles).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+              </select>
+            </label>
+            <label className="field">
+              <span>Context prompt</span>
+              <textarea required minLength={5} maxLength={8000} rows={9}
+                value={data.contextPrompt} onChange={(e) => update("contextPrompt", e.target.value)} />
+              <small>{"Edit this pre-built prompt. {{company}}, {{icp}}, {{selling}}, and {{pitchStyle}} use the context above."}</small>
+            </label>
+            <button type="button" className="button" onClick={() => update("contextPrompt", defaultContextPrompt)}>Reset context prompt</button>
+            <h3 className="form-section-title">Pitch strategy &amp; samples</h3>
+            <label className="field">
+              <span>Pitch strategy</span>
+              <textarea required minLength={5} maxLength={4000} rows={3}
+                value={data.pitchStrategy} onChange={(e) => update("pitchStrategy", e.target.value)} />
+              <small>Describe your opening, value proposition, and call to action.</small>
+            </label>
+            <label className="field">
+              <span>Sample pitches</span>
+              <textarea required minLength={5} maxLength={8000} rows={8}
+                value={data.pitchSamples} onChange={(e) => update("pitchSamples", e.target.value)} />
+              <small>Adapt these examples or add your own. The generator uses them as guidance and fills details only from supplied facts.</small>
+            </label>
+            <h3 className="form-section-title">Schedule</h3>
+            <label className="field">
+              <span>Run campaign</span>
+              <select value={data.scheduleMode} onChange={(e) => setData((d) => ({ ...d, scheduleMode: e.target.value as Campaign["scheduleMode"], startsAt: "" }))}>
+                <option value="scheduled">Daily schedule</option>
+                <option value="continuous">From a start time until paused</option>
+              </select>
+            </label>
+            {data.scheduleMode === "continuous" && (
+              <label className="field">
+                <span>Start date &amp; time</span>
+                <input type="datetime-local" required value={data.startsAt}
+                  onChange={(e) => update("startsAt", e.target.value)} />
+                <small>Start time in {Intl.DateTimeFormat().resolvedOptions().timeZone}. After you start the campaign, it waits until this time, then runs around the clock until paused. Daily limits still apply. Keep BREKTRA running to process jobs.</small>
+              </label>
+            )}
             <div className="form-row">
               <label className="field">
                 <span>Daily outbound allocation</span>
@@ -2157,6 +2219,7 @@ function CampaignForm({
                 />
               </label>
             </div>
+            {data.scheduleMode === "scheduled" && (
             <div className="form-row">
               <label className="field">
                 <span>Start hour · 24h</span>
@@ -2181,6 +2244,7 @@ function CampaignForm({
                 />
               </label>
             </div>
+            )}
           </fieldset>
           <div className="note">
             <ShieldCheck size={16} />

@@ -2,6 +2,8 @@ import "dotenv/config";
 import express from "express";
 import { resolve } from "node:path";
 import { createHash } from "node:crypto";
+import { realpathSync } from "node:fs";
+import { acquireLock } from "./lock.ts";
 import { z } from "zod";
 import { aiHealth } from "./ai.ts";
 import {
@@ -37,6 +39,8 @@ if (
   throw new Error(
     "Sheets mode requires GOOGLE_APPLICATION_CREDENTIALS and CONTROL_SPREADSHEET_ID.",
   );
+const releaseWorkspaceLock = await acquireLock(`workspace:${realpathSync.native(resolve(".")).toLowerCase()}`);
+const releaseControlLock = sheets ? await acquireLock(`sheets:${sheets.controlId}`) : undefined;
 const store = new Store(sheets ? emptyState() : demoState(), sheets);
 if (sheets) {
   try {
@@ -157,6 +161,14 @@ app.post("/api/integrations/reconnect", async (_req, res) => {
   await refreshAI();
   res.json(health());
 });
+app.patch("/api/settings/training", async (req, res) => {
+  ready();
+  const { enabled } = z.object({ enabled: z.boolean() }).parse(req.body);
+  await store.change((state) => {
+    state.settings[0].trainingCollection = enabled;
+  });
+  res.json({ ok: true });
+});
 const campaignSchema = z
   .object({
     name: z.string().trim().min(3).max(100),
@@ -166,7 +178,14 @@ const campaignSchema = z
     accountId: z.string().min(1),
     dailyLimit: z.number().int().min(1).max(100),
     icp: z.string().trim().min(5).max(2000),
-    offer: z.string().trim().min(5).max(2000),
+    company: z.string().trim().min(1).max(2000),
+    selling: z.string().trim().min(5).max(2000),
+    pitchStyle: z.enum(["conversational", "direct", "indirect"]),
+    contextPrompt: z.string().trim().min(5).max(8000),
+    pitchStrategy: z.string().trim().min(5).max(4000),
+    pitchSamples: z.string().trim().min(5).max(8000),
+    scheduleMode: z.enum(["scheduled", "continuous"]).default("scheduled"),
+    startsAt: z.union([z.literal(""), z.iso.datetime()]).default(""),
     startHour: z.number().int().min(0).max(23),
     endHour: z.number().int().min(1).max(24),
     timezone: z.string().refine((t) => {
@@ -178,7 +197,8 @@ const campaignSchema = z
       }
     }, "Use a valid IANA timezone."),
   })
-  .refine((c) => c.endHour > c.startHour, "End hour must be after start hour.");
+  .refine((c) => c.scheduleMode !== "scheduled" || c.endHour > c.startHour, "End hour must be after start hour.")
+  .refine((c) => c.scheduleMode !== "continuous" || !!c.startsAt, "Choose a start date and time for continuous running.");
 app.post("/api/campaigns", async (req, res) => {
   ready();
   const input = campaignSchema.parse(req.body);
@@ -352,6 +372,7 @@ app.put("/api/drafts/:id", async (req, res) => {
     .object({
       text: z.string().trim().min(10).max(1500),
       status: z.enum(["pending", "approved", "rejected"]),
+      reason: z.string().trim().max(1000).default(""),
     })
     .parse(req.body);
   await store.change((state) => {
@@ -367,7 +388,15 @@ app.put("/api/drafts/:id", async (req, res) => {
         draft.fit === "not_fit")
     )
       throw new Error("This lead is not eligible for approval.");
-    Object.assign(draft, input);
+    const example = state.trainingExamples.find((e) => e.draftId === draft.id);
+    const lastFeedback = [...state.trainingFeedback].reverse().find((f) => f.draftId === draft.id);
+    if (state.settings[0].trainingCollection && example &&
+        (draft.text !== input.text || draft.status !== input.status ||
+          (input.reason && (lastFeedback?.reason !== input.reason || lastFeedback.text !== input.text || lastFeedback.decision !== input.status))))
+      state.trainingFeedback.push({ id: id(), exampleId: example.id, draftId: draft.id,
+        at: now(), text: input.text, decision: input.status, reason: input.reason });
+    draft.text = input.text;
+    draft.status = input.status;
     if (input.status === "approved" && !sheets) {
       if (
         state.jobs.some(
@@ -608,7 +637,9 @@ const server = app.listen(port, "127.0.0.1", () =>
 function stop() {
   clearInterval(aiTimer);
   clearInterval(runnerTimer);
-  server.close(() => process.exit(0));
+  server.close(() => {
+    void Promise.all([releaseWorkspaceLock(), releaseControlLock?.()]).finally(() => process.exit(0));
+  });
 }
 process.on("SIGINT", stop);
 process.on("SIGTERM", stop);

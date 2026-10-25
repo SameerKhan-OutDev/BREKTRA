@@ -1,15 +1,25 @@
 import type { Store } from "./store.ts";
-import { canDispatch, id, log, now } from "./domain.ts";
-import { generateDraft } from "./ai.ts";
+import { canDispatch, id, log, now, queueCampaign } from "./domain.ts";
+import { generateDraft, generationConfig } from "./ai.ts";
 export class Runner {
   private busy = false;
   private lastCampaign = "";
-  constructor(private store: Store) {}
+  constructor(private store: Store, private generate = generateDraft) {}
   async tick() {
     if (this.busy || this.store.syncError) return;
     this.busy = true;
     let selected = "";
     try {
+      // Pick up newly imported leads and newly confirmed connections while active.
+      // Failed jobs require an explicit restart rather than an automatic retry loop.
+      const candidate = structuredClone(this.store.state);
+      let added = 0;
+      for (const campaign of candidate.campaigns.filter((c) => c.status === "running"))
+        added += queueCampaign(candidate, campaign, false);
+      if (added) await this.store.change((state) => {
+        for (const campaign of state.campaigns.filter((c) => c.status === "running"))
+          queueCampaign(state, campaign, false);
+      });
       const s = this.store.state;
       const campaigns = s.campaigns.filter((c) => c.status === "running");
       const lastIndex = campaigns.findIndex((c) => c.id === this.lastCampaign);
@@ -44,37 +54,60 @@ export class Runner {
           throw new Error("Live LinkedIn sending is unavailable.");
         job.status = "running";
         job.updatedAt = now();
+        job.intentAt = job.updatedAt;
         job.detail = "Intent recorded; processing locally";
+        const lead = state.leads.find((l) => l.id === job.leadId)!;
+        if (job.kind === "draft" && state.settings[0].trainingCollection)
+          state.trainingExamples.push({
+            id: `generation:${job.id}`, jobId: job.id, capturedAt: now(),
+            simulated: !this.store.sheets, status: "generating",
+            input: { campaign: structuredClone(campaign), lead: structuredClone(lead),
+              generation: generationConfig(!this.store.sheets) },
+          });
         return {
           job: structuredClone(job),
           campaign: structuredClone(campaign),
-          lead: structuredClone(state.leads.find((l) => l.id === job.leadId)!),
+          lead: structuredClone(lead),
         };
       });
       if (!intent) return;
       const { job, campaign, lead } = intent;
       const generated =
         job.kind === "draft"
-          ? await generateDraft(lead, campaign, !this.store.sheets)
+          ? await this.generate(lead, campaign, !this.store.sheets)
           : null;
       await this.store.change((state) => {
         const current = state.jobs.find((j) => j.id === job.id)!;
+        if (current.status !== "running") return; // Reconnect invalidates the old runner.
         current.updatedAt = now();
         const currentLead = state.leads.find((l) => l.id === lead.id)!;
-        if (currentLead.optedOut) {
+        const currentCampaign = state.campaigns.find((c) => c.id === campaign.id)!;
+        const example = state.trainingExamples.find((e) => e.jobId === job.id);
+        if (currentLead.optedOut || currentCampaign.status !== "running" ||
+            JSON.stringify(currentLead) !== JSON.stringify(lead) ||
+            JSON.stringify(currentCampaign) !== JSON.stringify(campaign)) {
           current.status = "cancelled";
-          current.detail = "Cancelled because the lead opted out.";
+          current.detail = "Campaign or lead changed during processing. Review before starting again.";
+          if (example) example.status = "discarded";
           return;
         }
         if (generated) {
+          const draftId = id();
           state.drafts.push({
-            id: id(),
+            id: draftId,
             campaignId: campaign.id,
             leadId: lead.id,
             ...generated,
             status: "pending",
             createdAt: now(),
           });
+          if (example) {
+            if (state.settings[0].trainingCollection) {
+              example.status = "completed";
+              example.draftId = draftId;
+              example.original = structuredClone(generated);
+            } else example.status = "discarded";
+          }
           current.status = "completed";
           current.detail = "Draft prepared for human review";
           log(
@@ -109,9 +142,11 @@ export class Runner {
           .change((state) => {
             const job = state.jobs.find((j) => j.id === selected);
             if (job?.status === "running") {
-              job.status = "failed";
+              job.status = job.kind === "draft" ? "failed" : "uncertain";
               job.updatedAt = now();
               job.detail = e instanceof Error ? e.message : "Job failed";
+              const example = state.trainingExamples.find((e) => e.jobId === job.id);
+              if (example) example.status = "failed";
               log(
                 state,
                 "Job needs attention",

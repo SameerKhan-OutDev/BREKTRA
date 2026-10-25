@@ -44,7 +44,14 @@ export interface Campaign {
   status: CampaignStatus;
   dailyLimit: number;
   icp: string;
-  offer: string;
+  company: string;
+  selling: string;
+  pitchStyle: "conversational" | "direct" | "indirect";
+  contextPrompt: string;
+  pitchStrategy: string;
+  pitchSamples: string;
+  scheduleMode: "scheduled" | "continuous";
+  startsAt: string;
   startHour: number;
   endHour: number;
   timezone: string;
@@ -67,6 +74,7 @@ export interface Job {
   createdAt: string;
   updatedAt: string;
   detail: string;
+  intentAt?: string;
 }
 export interface Draft {
   id: string;
@@ -88,6 +96,38 @@ export interface Activity {
   detail: string;
   at: string;
   simulated: boolean;
+  eventType?: "pitch_review_required" | "review_decision" | "essential_error";
+}
+// Desktop preferences belong to this computer, not to the shared workspace.
+export interface DesktopNotificationPreferences {
+  enabled: boolean;
+  categories: Record<string, boolean>;
+  privacy: "generic" | "preview";
+  sound: boolean;
+  quietHours: { enabled: boolean; timezone: string; startHour: number; endHour: number };
+}
+export interface WorkspaceSettings {
+  id: "workspace";
+  trainingCollection: boolean;
+}
+export interface TrainingExample {
+  id: string;
+  jobId: string;
+  draftId?: string;
+  capturedAt: string;
+  simulated: boolean;
+  status: "generating" | "completed" | "failed" | "interrupted" | "discarded";
+  input: { campaign: Campaign; lead: Lead; generation: { model: string; promptVersion: string; temperature: number; numCtx: number } };
+  original?: { text: string; fit: Draft["fit"]; evidence: string[]; generator: string };
+}
+export interface TrainingFeedback {
+  id: string;
+  exampleId: string;
+  draftId: string;
+  at: string;
+  text: string;
+  decision: Draft["status"];
+  reason: string;
 }
 export interface State {
   accounts: Account[];
@@ -97,6 +137,9 @@ export interface State {
   jobs: Job[];
   drafts: Draft[];
   activity: Activity[];
+  settings: WorkspaceSettings[];
+  trainingExamples: TrainingExample[];
+  trainingFeedback: TrainingFeedback[];
 }
 export interface Health {
   mode: "demo" | "sheets";

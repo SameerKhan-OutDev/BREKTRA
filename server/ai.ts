@@ -1,11 +1,16 @@
 import { z } from "zod";
 import type { Campaign, Lead } from "../shared/types.ts";
+import { renderContext } from "../shared/campaign.ts";
 const outputSchema = z.object({
   fit: z.enum(["fit", "not_fit", "needs_review"]),
   evidence: z.array(z.string().min(1).max(500)).min(1).max(8),
   text: z.string().min(10).max(1500),
 });
 const model = () => process.env.OLLAMA_MODEL || "qwen3:4b";
+export const generationConfig = (demo: boolean) => ({
+  model: demo ? "demo-template" : model(), promptVersion: "brektra-pitch-v1",
+  temperature: 0.3, numCtx: 4096,
+});
 function baseUrl() {
   const url = new URL(process.env.OLLAMA_URL || "http://127.0.0.1:11434");
   if (
@@ -54,15 +59,18 @@ export async function generateDraft(
           ? `Provided notes: ${lead.notes}`
           : "No additional profile facts available.",
       ],
-      text: `Hi ${lead.name.split(" ")[0]}, I came across your work at ${lead.company}. ${campaign.offer} Would you be open to comparing notes?`,
+      text: campaign.pitchStyle === "indirect"
+        ? `Hi ${lead.name.split(" ")[0]}, I noticed your role at ${lead.company}. How is your team approaching outreach? Happy to exchange ideas if helpful.`
+        : `Hi ${lead.name.split(" ")[0]}, I noticed your role at ${lead.company}. ${campaign.selling} ${campaign.pitchStyle === "direct" ? "Would a short conversation about whether this fits your team be useful?" : "Would you be open to comparing notes?"}`,
       generator: "Demo template · no AI inference",
     };
+  const config = generationConfig(false);
   const response = await fetch(`${baseUrl()}/api/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     signal: AbortSignal.timeout(120000),
     body: JSON.stringify({
-      model: model(),
+      model: config.model,
       stream: false,
       think: false,
       format: {
@@ -75,7 +83,7 @@ export async function generateDraft(
         required: ["fit", "evidence", "text"],
         additionalProperties: false,
       },
-      options: { temperature: 0.3, num_ctx: 4096 },
+      options: { temperature: config.temperature, num_ctx: config.numCtx },
       messages: [
         {
           role: "system",
@@ -86,7 +94,12 @@ export async function generateDraft(
           role: "user",
           content: JSON.stringify({
             icp: campaign.icp,
-            offer: campaign.offer,
+            company: campaign.company,
+            selling: campaign.selling,
+            pitchStyle: campaign.pitchStyle,
+            contextPrompt: renderContext(campaign),
+            pitchStrategy: campaign.pitchStrategy,
+            pitchSamples: campaign.pitchSamples,
             lead: {
               name: lead.name,
               title: lead.title,

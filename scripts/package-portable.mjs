@@ -18,6 +18,9 @@ const output = await build({
   banner: { js: 'import { createRequire as __createRequire } from "node:module"; const require = __createRequire(import.meta.url);' },
 });
 await cp(join(root, 'dist'), join(staging, 'dist'), { recursive: true });
+await mkdir(join(staging, 'docs'), { recursive: true });
+for (const name of ['WORKING_NOTES.md', 'BACKEND_IMPLEMENTATION_PLAN.md', 'IMPLEMENTATION_STATUS.md', 'PERSISTENCE.md'])
+  await cp(join(root, 'docs', name), join(staging, 'docs', name));
 await cp(process.execPath, join(staging, 'runtime', 'node.exe'));
 for (const name of await readdir(join(root, 'scripts', 'portable'))) await cp(join(root, 'scripts', 'portable', name), join(staging, name));
 await cp(join(root, '.env.example'), join(staging, '.env.example'));
@@ -49,5 +52,18 @@ await writeFile(join(staging, 'READ ME FIRST.txt'), `BREKTRA - Windows 10/11, 64
 await mkdir(dirname(archive), { recursive: true });
 // Archive only the fresh allowlisted staging tree, never a user's configured copy.
 execFileSync('tar.exe', ['-a', '-cf', archive, '-C', stagingParent, basename(staging)], { stdio: 'inherit' });
-await cp(staging, destination, { recursive: true });
+// Windows locks a running node.exe. Reuse it only when its bytes match this build.
+// This keeps a running configured copy intact; the ZIP always uses fresh staging.
+const stagedRuntime = join(staging, 'runtime', 'node.exe');
+const installedRuntime = join(destination, 'runtime', 'node.exe');
+let reuseRuntime = false;
+try {
+  reuseRuntime = (await readFile(stagedRuntime)).equals(await readFile(installedRuntime));
+} catch (error) {
+  if (error.code !== 'ENOENT') throw error;
+}
+await cp(staging, destination, {
+  recursive: true,
+  filter: source => !(reuseRuntime && source === stagedRuntime),
+});
 console.log(`Portable folder: ${destination}\nShare this ZIP: ${archive}`);

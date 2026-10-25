@@ -13,7 +13,40 @@ import { Store } from "../server/store.ts";
 import { Runner } from "../server/runner.ts";
 import type { Sheets } from "../server/sheets.ts";
 import type { Campaign, Job } from "../shared/types.ts";
+import { normalizeCampaign, renderContext } from "../shared/campaign.ts";
+import { generateDraft } from "../server/ai.ts";
 const noon = new Date("2026-10-24T07:00:00Z");
+test("continuous schedules wait for the start instant, run across days, and respect pause and budgets", () => {
+  const s = demoState();
+  const c = s.campaigns[0];
+  Object.assign(c, { status: "running", scheduleMode: "continuous", startsAt: noon.toISOString(), startHour: 9, endHour: 18 });
+  const lead = s.leads.find((l) => l.relationship === "not_connected")!;
+  const job = makeJob(c, "request", lead.id);
+  assert.ok(canDispatch(s, c, job, new Date(noon.getTime() - 1)));
+  assert.equal(canDispatch(s, c, job, noon), null);
+  assert.equal(canDispatch(s, c, job, new Date("2026-11-01T20:00:00Z")), null);
+  c.status = "paused";
+  assert.ok(canDispatch(s, c, job, noon));
+  c.status = "running";
+  s.accounts[0].dailyBudget = 1;
+  s.jobs.push({ ...job, status: "simulated" });
+  assert.match(canDispatch(s, c, job, noon)!, /budget/);
+  assert.equal(canDispatch(s, c, job, new Date("2026-10-25T07:00:00Z")), null);
+});
+
+test("existing campaign messaging migrates to the editable context without changing working hours", () => {
+  const { company, selling, pitchStyle, contextPrompt, pitchStrategy, pitchSamples, scheduleMode, startsAt, ...legacy } = demoState().campaigns[0];
+  const migrated = normalizeCampaign({ ...legacy, offer: "Legacy selling text" } as unknown as Campaign);
+  assert.equal(migrated.selling, "Legacy selling text");
+  assert.equal(migrated.scheduleMode, "scheduled");
+  assert.equal(migrated.startHour, legacy.startHour);
+  assert.ok(!("offer" in migrated));
+  assert.match(renderContext(migrated), /Legacy selling text/);
+  assert.match(renderContext(migrated), /Conversational/);
+  migrated.contextPrompt = "Custom guidance for {{company}}: {{selling}}";
+  migrated.company = "Example";
+  assert.equal(renderContext(migrated), "Custom guidance for Example: Legacy selling text");
+});
 const makeJob = (
   campaign: Campaign,
   kind: Job["kind"],
@@ -257,4 +290,46 @@ test("runner records simulated outcomes and generates review drafts without live
       ["simulated", "completed"].includes(j.status),
     ),
   );
+});
+
+test("an active campaign picks up new leads without restarting or retrying failed work", async () => {
+  const s = demoState();
+  Object.assign(s.campaigns[0], { status: "running", scheduleMode: "continuous", startsAt: "2020-01-01T00:00:00Z" });
+  queueCampaign(s, s.campaigns[0]);
+  for (const job of s.jobs) job.status = "failed";
+  const fresh = { ...s.leads.find((l) => l.relationship === "not_connected")!, id: "fresh-lead", profileUrl: "https://www.linkedin.com/in/fresh-lead" };
+  s.leads.push(fresh);
+  const store = new Store(s);
+  await new Runner(store).tick();
+  assert.equal(store.state.jobs.find((j) => j.leadId === fresh.id)?.status, "simulated");
+  assert.equal(store.state.jobs.length, s.jobs.length + 1);
+});
+
+test("draft generation supplies the edited context, style, strategy and samples to the local model", async () => {
+  const s = demoState();
+  const c = s.campaigns[0];
+  c.contextPrompt = "Custom context for {{company}} selling {{selling}} to {{icp}} in a {{pitchStyle}} style.";
+  c.pitchStyle = "direct";
+  c.pitchStrategy = "Ask one relevant question.";
+  c.pitchSamples = "Hi Alex, is workflow automation a priority?";
+  const originalFetch = globalThis.fetch;
+  try {
+    globalThis.fetch = async (_input, init) => {
+      const body = JSON.parse(String(init?.body));
+      const context = JSON.parse(body.messages[1].content);
+      assert.equal(context.contextPrompt, renderContext(c));
+      assert.equal(context.company, c.company);
+      assert.equal(context.selling, c.selling);
+      assert.equal(context.pitchStyle, "direct");
+      assert.equal(context.pitchStrategy, c.pitchStrategy);
+      assert.equal(context.pitchSamples, c.pitchSamples);
+      assert.equal(context.lead.name, s.leads[0].name);
+      return Response.json({ message: { content: JSON.stringify({ fit: "needs_review", evidence: ["Provided role"], text: "Hi Sofia, is workflow automation a priority?" }) } });
+    };
+    const draft = await generateDraft(s.leads[0], c, false);
+    assert.equal(draft.fit, "needs_review");
+    assert.match(draft.text, /workflow automation/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
