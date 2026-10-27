@@ -11,7 +11,7 @@ export const generationConfig = (demo: boolean) => ({
   model: demo ? "demo-template" : model(), promptVersion: "brektra-pitch-v1",
   temperature: 0.3, numCtx: 4096,
 });
-function baseUrl() {
+export function ollamaOrigin() {
   const url = new URL(process.env.OLLAMA_URL || "http://127.0.0.1:11434");
   if (
     !["127.0.0.1", "localhost", "[::1]"].includes(url.hostname) ||
@@ -22,7 +22,7 @@ function baseUrl() {
 }
 export async function aiHealth() {
   try {
-    const response = await fetch(`${baseUrl()}/api/tags`, {
+    const response = await fetch(`${ollamaOrigin()}/api/tags`, {
       signal: AbortSignal.timeout(2500),
     });
     if (!response.ok) throw new Error();
@@ -65,7 +65,7 @@ export async function generateDraft(
       generator: "Demo template · no AI inference",
     };
   const config = generationConfig(false);
-  const response = await fetch(`${baseUrl()}/api/chat`, {
+  const response = await fetch(`${ollamaOrigin()}/api/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     signal: AbortSignal.timeout(120000),

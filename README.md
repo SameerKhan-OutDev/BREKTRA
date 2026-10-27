@@ -1,8 +1,18 @@
 # BREKTRA
 
+Current release: **0.4.0** (major 0 · update 4 · patch 0). See [version history](CHANGELOG.md).
+
 A local outreach workspace built with React, TypeScript, Express, Google Sheets, and Ollama.
 
+Update 0.3.0 begins the company foundation: **Settings → Company setup** previews and prepares existing records for one named company, with backup acknowledgement and paused sending. Multiple companies and private company access remain disabled. See [migration instructions](docs/COMPANY_MIGRATION.md) and the [implementation roadmap](docs/UPDATE_0.3.0_IMPLEMENTATION_PLAN.md) for delivered scope and remaining work.
+
 Working requirements, including rebuilding the portable app after changes, are recorded in [docs/WORKING_NOTES.md](docs/WORKING_NOTES.md). The phased live backend plan is in [docs/BACKEND_IMPLEMENTATION_PLAN.md](docs/BACKEND_IMPLEMENTATION_PLAN.md). Both documents are included in the portable package's `docs` folder. Planning does not enable live LinkedIn sending.
+
+The outreach expansion adds campaign sequences, a Gmail transport/inbox, source-backed company enrichment and authenticated team access. The interface adds only **Inbox** to navigation; sequences belong to each campaign, contact/evidence review to Leads, and Gmail/team settings are collapsed in Settings. See [the implementation plan](docs/OUTREACH_EXPANSION_PLAN.md) and [Gmail/hosted setup](docs/HOSTED_SETUP.md) for capabilities, prerequisites and validation boundaries. Google Sheets remains the application database.
+
+Gmail sending requires your OAuth setup, a Sheets workspace, separately approved leads, reviewed exact messages and an explicitly enabled mailbox. Accepted by Gmail does not mean delivered to the recipient. Live LinkedIn sending remains unavailable. Demo mail and conversations are simulated and reset on restart. Company-page enrichment is public-page evidence/MX checking, not personal-profile enrichment or address verification.
+
+For a shared team, `pnpm package:server` creates `release/BREKTRA-Server.tar.gz`; `pnpm verify:server` checks its clean extraction. A single authenticated server coordinates all teammate browsers and runs Ollama on that server. It requires your hosting/domain/HTTPS configuration and dedicated Google resources. Packaging does not deploy it. The portable ZIP stays loopback-only by default.
 
 ## Open the app without commands (Windows)
 
@@ -76,11 +86,11 @@ Demo drafts use a deterministic template, clearly labeled as such. Demo requests
 
 1. Create a Google Cloud service account, enable the Google Sheets API, and download its JSON credentials outside this repository.
 2. Create a **dedicated empty control spreadsheet** and share it with the service account email as an editor. Share source lead spreadsheets with the account too; viewer access is enough for source sheets in this version.
-3. Copy `.env.example` to `.env`. Set `STORAGE_MODE=sheets`, `GOOGLE_APPLICATION_CREDENTIALS` to the credentials file path, and `CONTROL_SPREADSHEET_ID` to the control spreadsheet ID.
-4. Restart the server. It creates Accounts, Sources, Campaigns, Relationships, Jobs, Drafts, Activity, WorkspaceSettings, TrainingExamples and TrainingFeedback tabs. Each tab has `id` and `data` columns. New records use a versioned JSON envelope; older records migrate after validation.
+3. Open **Settings → Real workspace setup**, choose the JSON key, paste the control spreadsheet URL/ID, and click **Check spreadsheet**. The check is read-only.
+4. Confirm the sheet and click **Connect workspace**. BREKTRA creates its control tabs and saves the connection encrypted. It switches from demo to Sheets immediately, with campaigns/mailbox sending paused; no environment-file edit or restart is needed. See [guided local setup](docs/LOCAL_SETUP.md) for Google permissions, recovery and advanced environment configuration.
 5. Register an account from Settings, then import from Leads. Provide a source spreadsheet ID, select a tab and account, and map columns.
 
-The source must have a unique header row. Name and LinkedIn profile URL are required; title, company, notes, relationship, and opt-out columns are optional. Imports inspect columns A–AZ and at most 5,000 data rows. Recognized relationship values are `connected`, `not_connected`, `pending`, and `unknown`; other values become `unknown`. Opt-out values `true`, `yes`, and `1` are recognized. Duplicate normalized URLs are skipped per account; the import log reports duplicate and invalid row counts. Reimporting adds new leads; it does not refresh existing records or move them between sources.
+The source must have a unique header row. A name and either a LinkedIn profile URL or supplied email are required; title, company, website, notes, relationship, and opt-out columns are optional. Email-only leads use stable email IDs and cannot enter LinkedIn jobs. Imports inspect columns A–AZ and at most 5,000 data rows. Recognized relationship values are `connected`, `not_connected`, `pending`, and `unknown`; other values (or missing LinkedIn profiles) become `unknown`. Opt-out values `true`, `yes`, and `1` are recognized. Duplicate normalized profiles/emails are skipped per account; the import log reports duplicate and invalid row counts. Reimporting adds new leads; it does not refresh existing records or move them between sources.
 
 **Existing source tabs are read-only in this version.** Relationship edits and workspace results persist in the control spreadsheet. Writing mapped dropdown statuses back to original CRM tabs is a later milestone. Do not use a pre-existing CRM as the control spreadsheet or edit control records while the server is running. Only one server process should own a control spreadsheet.
 
@@ -90,19 +100,15 @@ Settings → Future AI examples starts off. Enabling it captures new generation 
 
 ## Connect local AI
 
-Install/start Ollama separately, then:
+In **Settings → Real workspace setup**, use **Install Ollama** if needed, then **Start Ollama** and **Download model**. Progress and cancellation are shown in the app; a successful download selects the model automatically. **Use this model** selects an already installed model. No terminal command or app restart is needed. Installing Ollama itself remains a one-time user action.
 
-```powershell
-ollama pull qwen3:4b
-```
-
-The default local endpoint is `http://127.0.0.1:11434`; configure `OLLAMA_URL` and `OLLAMA_MODEL` in `.env` if needed. Only loopback HTTP endpoints are accepted. One inference job runs at a time, with a 4K context and a two-minute request timeout.
+The default local endpoint is `http://127.0.0.1:11434`; advanced operators can configure `OLLAMA_URL` in the environment. Only loopback HTTP endpoints are accepted. One inference job runs at a time, with a 4K context and a two-minute request timeout. Hosted servers keep operator-managed setup. See [local setup](docs/LOCAL_SETUP.md).
 
 In Sheets mode, import confirmed connections with factual notes, create a pitching campaign with your company, ICP, what you’re selling, pitch style, editable context prompt, and pitch strategy with samples, and choose Prepare drafts. Working hours apply to draft preparation too. Generated output must contain a fit decision, evidence, and a draft. All drafts require review. No LinkedIn profile extraction is available yet; generation uses only supplied sheet facts. Model quality, performance, and actual Sheets credentials have not been benchmarked or verified on this machine by the test suite.
 
 ## Boundaries of this milestone
 
-LinkedIn browser login/session management, profile extraction, connection acceptance detection, reply detection, live sending, follow-ups, source CRM writeback, and uncertain-outcome resolution are not implemented. Registered real accounts are labels with budgets, not authenticated sessions. Real campaigns prepare drafts only. Approving a real draft saves its approval without sending it.
+Live LinkedIn login/session management, profile extraction, invitation/acceptance/reply checks and sending remain unavailable. Registered LinkedIn accounts are labels with budgets, not authenticated sessions. The legacy LinkedIn path prepares drafts; approval saves a decision without sending. The Gmail transport, inbox, reviewed sequences and uncertain-send reconciliation are implemented separately, with real Google/recipient validation still outstanding. Source CRM writeback remains planned.
 
 Daily limits are workspace settings, not claims about LinkedIn activity allowances. Balanced campaigns reserve outbound action counts 50/50 (requests receive an odd extra action); unused allocations do not spill over. Account budgets reset on the Asia/Karachi day boundary; campaign allocations reset in the campaign’s timezone. Working-hour windows are same-day only; overnight windows are not supported yet.
 

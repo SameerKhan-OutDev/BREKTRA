@@ -1,0 +1,40 @@
+import { z } from "zod";
+import { ownership } from "./company-schema.ts";
+const key = z.string().min(1), at = z.iso.datetime(), text = z.string();
+export const roleSchema = z.enum(["owner", "admin", "operator", "reviewer", "viewer"]);
+export const stepSchema = z.object({ id: key, kind: z.enum(["email", "linkedin_request", "linkedin_message"]),
+  delayHours: z.number().int().min(0).max(720), subject: text.max(200), body: text.max(6000) });
+export const outreachShape = {
+  mailboxes: z.array(z.object({ ...ownership, id: key, email: z.email(), name: text, provider: z.enum(["gmail", "demo"]),
+    status: z.enum(["connected", "needs_login"]), sendingEnabled: z.boolean(), dailyBudget: z.number().int().min(1).max(100),
+    syncedAt: at.optional(), syncError: text })),
+  sequences: z.array(z.object({ ...ownership, id: key, campaignId: key, enabled: z.boolean(), mailboxId: text,
+    version: z.number().int().positive(), steps: z.array(stepSchema).min(1).max(8), updatedAt: at })),
+  enrollments: z.array(z.object({ ...ownership, id: key, sequenceId: key, campaignId: key, leadId: key,
+    sequenceVersion: z.number().int().positive(), stepIndex: z.number().int().nonnegative(),
+    status: z.enum(["active", "completed", "replied", "stopped"]), startedAt: at, nextAt: at, detail: text })),
+  outreachActions: z.array(z.object({ ...ownership, id: key, campaignId: key, leadId: key, mailboxId: text,
+    enrollmentId: key.optional(), stepId: key.optional(), conversationId: key.optional(),
+    conversationVersion: z.number().int().positive().optional(),
+    kind: z.enum(["email", "linkedin_request", "linkedin_message"]), purpose: z.enum(["sequence", "reply"]),
+    recipient: text.max(320), subject: text.max(200), body: text.max(6000), revision: z.number().int().positive(),
+    status: z.enum(["pending", "approved", "running", "accepted", "simulated", "failed", "uncertain", "cancelled", "rejected"]),
+    approvedRevision: z.number().int().positive().optional(), approvedBy: key.optional(), approvedAt: at.optional(),
+    createdAt: at, updatedAt: at, intentAt: at.optional(), messageId: key,
+    providerMessageId: key.optional(), providerThreadId: key.optional(), detail: text })),
+  conversations: z.array(z.object({ ...ownership, id: key, mailboxId: key, leadId: key, campaignId: key,
+    providerThreadId: key, subject: text.max(200), updatedAt: at, unread: z.boolean(),
+    status: z.enum(["open", "done"]), assigneeId: text, simulated: z.boolean(), messageVersion: z.number().int().nonnegative().optional() })),
+  outreachReviews: z.array(z.object({ ...ownership, id: key, actionId: key, revision: z.number().int().positive(),
+    subject: text.max(200), body: text.max(6000), recipient: text, actorId: key, at,
+    decision: z.enum(["pending", "approved", "rejected"]) })),
+  messages: z.array(z.object({ ...ownership, id: key, conversationId: key, providerMessageId: key,
+    direction: z.enum(["inbound", "outbound"]), from: text, to: text, subject: text.max(200),
+    body: text.max(16000), at, messageId: text, simulated: z.boolean() })),
+  enrichments: z.array(z.object({ ...ownership, id: key, leadId: key, sourceUrl: z.url(), checkedAt: at,
+    title: text.max(500), summary: text.max(3000), listedEmails: z.array(z.email()).max(20),
+    emailDomainStatus: z.enum(["has_mx", "no_mx", "not_checked"]), status: z.enum(["pending", "accepted", "rejected"]) })),
+  members: z.array(z.object({ id: key, name: key, email: z.email(), role: roleSchema,
+    status: z.enum(["active", "invited", "disabled"]), createdAt: at })),
+  invitations: z.array(z.object({ ...ownership, id: key, memberId: key, expiresAt: at, acceptedAt: at.optional() })),
+};

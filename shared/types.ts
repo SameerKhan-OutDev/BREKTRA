@@ -1,3 +1,5 @@
+import type { Mailbox, Sequence, Enrollment, OutreachAction, Conversation, ConversationMessage, Enrichment, Member, Invitation, AuthStatus, OutreachReview } from "./outreach.ts";
+import type { Company, CompanyMembership, CompanyMigration, CompanyOwned } from "./company.ts";
 export type Mode = "requests" | "pitching" | "balanced";
 export type CampaignStatus = "draft" | "running" | "paused";
 export type Relationship =
@@ -5,7 +7,7 @@ export type Relationship =
   | "pending"
   | "connected"
   | "unknown";
-export interface Account {
+export interface Account extends CompanyOwned {
   id: string;
   name: string;
   role: string;
@@ -13,7 +15,7 @@ export interface Account {
   dailyBudget: number;
   status: "demo" | "not_connected";
 }
-export interface Source {
+export interface Source extends CompanyOwned {
   id: string;
   name: string;
   spreadsheetId: string;
@@ -22,7 +24,7 @@ export interface Source {
   importedAt: string;
   count: number;
 }
-export interface Lead {
+export interface Lead extends CompanyOwned {
   id: string;
   sourceId: string;
   accountId: string;
@@ -33,8 +35,14 @@ export interface Lead {
   relationship: Relationship;
   optedOut: boolean;
   notes: string;
+  email?: string;
+  website?: string;
+  repliedAt?: string;
+  outreachApproval?: "pending" | "approved" | "rejected";
+  outreachReviewedAt?: string;
+  outreachReviewedBy?: string;
 }
-export interface Campaign {
+export interface Campaign extends CompanyOwned {
   id: string;
   name: string;
   description: string;
@@ -57,7 +65,7 @@ export interface Campaign {
   timezone: string;
   createdAt: string;
 }
-export interface Job {
+export interface Job extends CompanyOwned {
   id: string;
   campaignId: string;
   leadId: string;
@@ -76,7 +84,7 @@ export interface Job {
   detail: string;
   intentAt?: string;
 }
-export interface Draft {
+export interface Draft extends CompanyOwned {
   id: string;
   campaignId: string;
   leadId: string;
@@ -86,8 +94,9 @@ export interface Draft {
   status: "pending" | "approved" | "rejected";
   generator: string;
   createdAt: string;
+  revision?: number;
 }
-export interface Activity {
+export interface Activity extends CompanyOwned {
   id: string;
   campaignId?: string;
   leadId?: string;
@@ -97,6 +106,7 @@ export interface Activity {
   at: string;
   simulated: boolean;
   eventType?: "pitch_review_required" | "review_decision" | "essential_error";
+  actorId?: string;
 }
 // Desktop preferences belong to this computer, not to the shared workspace.
 export interface DesktopNotificationPreferences {
@@ -106,11 +116,11 @@ export interface DesktopNotificationPreferences {
   sound: boolean;
   quietHours: { enabled: boolean; timezone: string; startHour: number; endHour: number };
 }
-export interface WorkspaceSettings {
+export interface WorkspaceSettings extends CompanyOwned {
   id: "workspace";
   trainingCollection: boolean;
 }
-export interface TrainingExample {
+export interface TrainingExample extends CompanyOwned {
   id: string;
   jobId: string;
   draftId?: string;
@@ -120,7 +130,7 @@ export interface TrainingExample {
   input: { campaign: Campaign; lead: Lead; generation: { model: string; promptVersion: string; temperature: number; numCtx: number } };
   original?: { text: string; fit: Draft["fit"]; evidence: string[]; generator: string };
 }
-export interface TrainingFeedback {
+export interface TrainingFeedback extends CompanyOwned {
   id: string;
   exampleId: string;
   draftId: string;
@@ -130,6 +140,9 @@ export interface TrainingFeedback {
   reason: string;
 }
 export interface State {
+  companies: Company[];
+  companyMemberships: CompanyMembership[];
+  companyMigrations: CompanyMigration[];
   accounts: Account[];
   sources: Source[];
   leads: Lead[];
@@ -140,6 +153,16 @@ export interface State {
   settings: WorkspaceSettings[];
   trainingExamples: TrainingExample[];
   trainingFeedback: TrainingFeedback[];
+  mailboxes: Mailbox[];
+  sequences: Sequence[];
+  enrollments: Enrollment[];
+  outreachActions: OutreachAction[];
+  outreachReviews: OutreachReview[];
+  conversations: Conversation[];
+  messages: ConversationMessage[];
+  enrichments: Enrichment[];
+  members: Member[];
+  invitations: Invitation[];
 }
 export interface Health {
   mode: "demo" | "sheets";
@@ -153,8 +176,10 @@ export interface Health {
   linkedin: { connected: false; detail: string };
   timezone: string;
   startedAt: string;
+  hosted?: boolean;
 }
 export interface Workspace {
   state: State;
   health: Health;
+  auth?: AuthStatus;
 }

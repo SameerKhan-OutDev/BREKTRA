@@ -18,8 +18,11 @@ const output = await build({
   banner: { js: 'import { createRequire as __createRequire } from "node:module"; const require = __createRequire(import.meta.url);' },
 });
 await cp(join(root, 'dist'), join(staging, 'dist'), { recursive: true });
+const { version } = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'));
+for (const name of ['README.md', 'ABOUT_BREKTRA.md', 'CHANGELOG.md']) await cp(join(root, name), join(staging, name));
+await writeFile(join(staging, 'VERSION.txt'), `${version}\n`);
 await mkdir(join(staging, 'docs'), { recursive: true });
-for (const name of ['WORKING_NOTES.md', 'BACKEND_IMPLEMENTATION_PLAN.md', 'IMPLEMENTATION_STATUS.md', 'PERSISTENCE.md'])
+for (const name of ['WORKING_NOTES.md', 'BACKEND_IMPLEMENTATION_PLAN.md', 'IMPLEMENTATION_STATUS.md', 'PERSISTENCE.md', 'OUTREACH_EXPANSION_PLAN.md', 'HOSTED_SETUP.md', 'UPDATE_0.3.0_IMPLEMENTATION_PLAN.md', 'COMPANY_MIGRATION.md', 'LOCAL_SETUP.md'])
   await cp(join(root, 'docs', name), join(staging, 'docs', name));
 await cp(process.execPath, join(staging, 'runtime', 'node.exe'));
 for (const name of await readdir(join(root, 'scripts', 'portable'))) await cp(join(root, 'scripts', 'portable', name), join(staging, name));
@@ -48,7 +51,7 @@ for (const directory of [...packageRoots].sort()) {
   }
 }
 await writeFile(join(staging, 'THIRD-PARTY-NOTICES.txt'), notices);
-await writeFile(join(staging, 'READ ME FIRST.txt'), `BREKTRA - Windows 10/11, 64-bit\r\n\r\n1. Extract the entire ZIP. Do not run it inside the ZIP.\r\n2. Open the BREKTRA folder.\r\n3. Double-click START BREKTRA. Your browser opens automatically.\r\n4. When finished, double-click STOP BREKTRA.\r\n\r\nNo Node.js installation or terminal commands are needed.\r\nKeep the runtime and dist folders beside the launcher.\r\nKeep your computer awake while campaigns run.\r\n\r\nThis version starts with DEMO DATA. No LinkedIn requests or messages are sent.\r\nDemo changes reset when you stop and restart the app.\r\nEach computer has its own local demo. Shared live operation is not set up.\r\nGoogle Sheets and local AI need separate setup through Settings.\r\nIf you later use the same control spreadsheet on two computers, run only one app at a time.\r\n\r\nShare the original BREKTRA-Windows-x64.zip, not a folder containing your .env, credentials, or logs.\r\nBuilt with Node ${process.version}.\r\n`);
+await writeFile(join(staging, 'READ ME FIRST.txt'), `BREKTRA ${version} - Windows 10/11, 64-bit\r\n\r\n1. Extract the entire ZIP. Do not run it inside the ZIP.\r\n2. Open the BREKTRA folder.\r\n3. Double-click START BREKTRA. Your browser opens automatically.\r\n4. When finished, double-click STOP BREKTRA.\r\n\r\nNo Node.js installation or terminal commands are needed.\r\nKeep the runtime and dist folders beside the launcher.\r\nKeep your computer awake while campaigns run.\r\n\r\nThis version starts with DEMO DATA. No LinkedIn requests or messages are sent.\r\nDemo changes reset when you stop and restart the app.\r\nEach computer has its own local demo. Shared live operation is not set up.\r\nGoogle Sheets and local AI need separate setup through Settings.\r\nIf you later use the same control spreadsheet on two computers, run only one app at a time.\r\n\r\nShare the original BREKTRA-Windows-x64.zip, not a folder containing your .env, credentials, or logs.\r\nBuilt with Node ${process.version}.\r\n`);
 await mkdir(dirname(archive), { recursive: true });
 // Archive only the fresh allowlisted staging tree, never a user's configured copy.
 execFileSync('tar.exe', ['-a', '-cf', archive, '-C', stagingParent, basename(staging)], { stdio: 'inherit' });

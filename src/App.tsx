@@ -1,3 +1,4 @@
+import { APP_VERSION } from "../shared/version";
 import {
   useEffect,
   useMemo,
@@ -57,12 +58,18 @@ import type {
 } from "../shared/types";
 
 import { defaultContextPrompt, defaultPitchStrategy, defaultPitchSamples, pitchStyles } from "../shared/campaign";
+import { AccessGate, usePermission } from "./access";
+import type { AuthStatus } from "../shared/outreach";
+import { Inbox, LeadDetails, OutreachReview, SequenceDialog, SettingsExtensions } from "./Outreach";
+import { CompanyFoundation } from "./CompanyFoundation";
+import { WorkspaceSetup } from "./WorkspaceSetup";
 
 type Page =
   | "Dashboard"
   | "Campaigns"
   | "Leads"
   | "Review queue"
+  | "Inbox"
   | "Activity"
   | "Settings";
 const nav: { name: Page; icon: typeof LayoutDashboard }[] = [
@@ -70,6 +77,7 @@ const nav: { name: Page; icon: typeof LayoutDashboard }[] = [
   { name: "Campaigns", icon: Layers3 },
   { name: "Leads", icon: Users },
   { name: "Review queue", icon: ListChecks },
+  { name: "Inbox", icon: MessageSquare },
   { name: "Activity", icon: ActivityIcon },
   { name: "Settings", icon: Settings2 },
 ];
@@ -115,6 +123,7 @@ async function api<T = any>(
     body: data === undefined ? undefined : JSON.stringify(data),
   });
   const json = await response.json();
+  if (response.status === 401) window.dispatchEvent(new Event("brektra-signin"));
   if (!response.ok) throw new Error(json.error || "Request failed.");
   return json;
 }
@@ -229,8 +238,14 @@ function Modal({
 }
 
 export default function App() {
+  return <AccessGate>{(auth) => <WorkspaceApp auth={auth}/>}</AccessGate>;
+}
+function WorkspaceApp({auth}:{auth:AuthStatus}) {
+  const operate = usePermission("operate");
+  const manage = usePermission("manage");
+  const [reviewChannel, setReviewChannel] = useState("linkedin");
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
-  const [page, setPage] = useState<Page>("Dashboard");
+  const [page, setPage] = useState<Page>(location.hash === "#settings" ? "Settings" : "Dashboard");
   const [error, setError] = useState("");
   const [toast, setToast] = useState("");
   const [busy, setBusy] = useState(false);
@@ -286,6 +301,7 @@ export default function App() {
     setError("");
   };
   const create = () => {
+    if (!operate) { setError("Your role can view campaigns but cannot create them."); return; }
     setEditing(undefined);
     setModal("campaign");
   };
@@ -312,7 +328,7 @@ export default function App() {
       </main>
     );
   const { state: s, health: h } = workspace;
-  const pending = s.drafts.filter((d) => d.status === "pending").length;
+  const pending = s.drafts.filter((d) => d.status === "pending").length + s.outreachActions.filter((a) => a.status === "pending").length;
   const goCampaign = (campaign: Campaign) => {
     setEditing(campaign);
     setModal("campaign");
@@ -357,10 +373,10 @@ export default function App() {
         <div className="workspace-switch">
           <span className="workspace-avatar">B</span>
           <div>
-            <strong>My workspace</strong>
-            <span>Personal workspace</span>
+            <strong title={s.companies[0]?.name || "My workspace"}>{s.companies[0]?.name || "My workspace"}</strong>
+            <span>{h.hosted ? "Shared team workspace" : "Personal workspace"} · v{APP_VERSION}</span>
           </div>
-          <Badge tone="neutral">LOCAL</Badge>
+          <Badge tone="neutral">{h.hosted ? "TEAM" : "LOCAL"}</Badge>
         </div>
         <div className="nav-label">WORKSPACE</div>
         <nav aria-label="Main navigation">
@@ -376,6 +392,7 @@ export default function App() {
               {name === "Review queue" && pending > 0 && (
                 <span className="nav-count">{pending}</span>
               )}
+              {name === "Inbox" && s.conversations.some((c) => c.unread) && <span className="nav-count">{s.conversations.filter((c) => c.unread).length}</span>}
             </button>
           ))}
         </nav>
@@ -384,12 +401,12 @@ export default function App() {
             <div className="local-card-heading">
               <span className={`status-dot ${offline ? "red" : ""}`} />
               <strong>
-                {offline ? "Server disconnected" : "Running on your machine"}
+                {offline ? "Server disconnected" : h.hosted ? "Shared workspace server" : "Running on your machine"}
               </strong>
             </div>
             <p>Your workspace, your control.</p>
             <span>
-              <ShieldCheck size={13} /> Sessions stay local
+              <ShieldCheck size={13} /> {h.hosted ? "One coordinated runner" : "Sessions stay local"}
             </span>
           </div>
           <button
@@ -403,8 +420,8 @@ export default function App() {
           <div className="sidebar-profile">
             <div className="avatar navy">B</div>
             <div>
-              <strong>BREKTRA workspace</strong>
-              <span>Foundation · v0.1</span>
+              <strong>{auth.user?.name || "BREKTRA workspace"}</strong>
+              <span>{auth.user?.role || "owner"}{h.hosted ? " · Hosted" : " · Local"}</span>
             </div>
           </div>
         </div>
@@ -425,7 +442,7 @@ export default function App() {
           </div>
           <div className="topbar-right">
             <span className="local-pill">
-              <span className="status-dot" /> Local workspace
+              <span className="status-dot" /> {h.hosted ? "Team workspace" : "Local workspace"}
             </span>
             <button
               className="icon-button notification-button"
@@ -495,16 +512,17 @@ export default function App() {
                     "Review queue": "A human touch before every conversation.",
                     Activity:
                       "A clear record of what happened, and what needs attention.",
-                    Settings: "Connect your tools. Keep your workspace local.",
+                    Settings: "Connections, privacy, and workspace access.",
+                    Inbox: "Read, assign, and review replies in one place.",
                   }[page]
                 }
               </p>
             </div>
-            {page === "Dashboard" || page === "Campaigns" ? (
+            {(page === "Dashboard" || page === "Campaigns") && operate ? (
               <button className="button primary" onClick={create}>
                 <Plus size={17} /> New campaign
               </button>
-            ) : page === "Leads" ? (
+            ) : page === "Leads" && operate ? (
               <button
                 className="button primary"
                 onClick={() => setModal("import")}
@@ -514,7 +532,7 @@ export default function App() {
             ) : page === "Settings" ? (
               <button
                 className="button"
-                disabled={busy}
+                disabled={busy || !manage}
                 onClick={() =>
                   void action(
                     () => api("/integrations/check", "POST"),
@@ -593,14 +611,16 @@ export default function App() {
               importLeads={() => setModal("import")}
             />
           )}
-          {page === "Review queue" && (
-            <Review
+          {page === "Review queue" && <>
+            <div className="review-channel-tabs tabs"><button className={reviewChannel === "linkedin" ? "selected" : ""} onClick={() => setReviewChannel("linkedin")}>LinkedIn drafts <span>{s.drafts.filter((d) => d.status === "pending").length}</span></button><button className={reviewChannel === "outreach" ? "selected" : ""} onClick={() => setReviewChannel("outreach")}>Sequence & email <span>{s.outreachActions.filter((a) => a.status === "pending").length}</span></button></div>
+            {reviewChannel === "outreach" ? <OutreachReview s={s} busy={busy} action={action}/> : <Review
               s={s}
               busy={busy}
               action={action}
               demo={h.mode === "demo"}
-            />
-          )}
+            />}
+          </>}
+          {page === "Inbox" && <Inbox s={s} action={action} busy={busy} review={() => {setReviewChannel("outreach");navigate("Review queue");}}/>}
           {page === "Activity" && <ActivityPage s={s} />}
           {page === "Settings" && (
             <Settings
@@ -616,7 +636,8 @@ export default function App() {
               connections.
             </span>
             <span>
-              Local workspace <span className="footer-dot">·</span> Asia/Karachi
+              {h.hosted ? "Team workspace" : "Local workspace"} <span className="footer-dot">·</span> Asia/Karachi
+              {auth.required && <button className="text-button" onClick={() => void api("/auth/logout","POST").then(() => window.dispatchEvent(new Event("brektra-signin")))}>Sign out</button>}
             </span>
           </footer>
         </main>
@@ -1043,12 +1064,15 @@ function Campaigns({
   create: () => void;
   edit: (c: Campaign) => void;
 }) {
+  const operate = usePermission("operate");
+  const [sequenceCampaign, setSequenceCampaign] = useState<Campaign | null>(null);
   const [filter, setFilter] = useState("all");
   const filtered = s.campaigns.filter(
     (c) => filter === "all" || c.status === filter,
   );
   return (
     <>
+      {sequenceCampaign && <SequenceDialog campaign={s.campaigns.find((c) => c.id === sequenceCampaign.id)!} s={s} action={action} busy={busy} close={() => setSequenceCampaign(null)}/>}
       <div className="section-toolbar">
         <div className="tabs">
           {["all", "running", "paused", "draft"].map((f) => (
@@ -1130,9 +1154,10 @@ function Campaigns({
                   <button className="button" onClick={() => edit(c)}>
                     View / edit
                   </button>
+                  <button className="button" onClick={() => setSequenceCampaign(c)}><ListChecks size={14}/>Sequence{s.sequences.some((q) => q.campaignId === c.id && q.enabled) ? " · on" : ""}</button>
                   <button
                     className={`button ${c.status === "running" ? "" : "primary"}`}
-                    disabled={busy}
+                    disabled={busy || !operate}
                     onClick={() =>
                       void action(
                         () =>
@@ -1153,7 +1178,9 @@ function Campaigns({
                     )}
                     {c.status === "running"
                       ? "Pause"
-                      : account?.status === "demo"
+                        : s.sequences.some((q) => q.campaignId === c.id && q.enabled)
+                          ? "Start sequence"
+                        : account?.status === "demo"
                         ? "Start demo"
                         : "Prepare drafts"}
                   </button>
@@ -1190,6 +1217,8 @@ function Leads({
   action: Action;
   importLeads: () => void;
 }) {
+  const operate = usePermission("operate");
+  const [detailId, setDetailId] = useState("");
   const [search, setSearch] = useState("");
   const [relationship, setRelationship] = useState("all");
   const [source, setSource] = useState("all");
@@ -1206,6 +1235,7 @@ function Leads({
   );
   return (
     <section className="panel">
+      {detailId && s.leads.some((l) => l.id === detailId) && <LeadDetails lead={s.leads.find((l) => l.id === detailId)!} s={s} action={action} busy={busy} close={() => setDetailId("")}/>}
       <div className="table-toolbar">
         <label className="search-input">
           <Search size={17} />
@@ -1269,10 +1299,10 @@ function Leads({
                           .join("")}
                       </div>
                       <div>
-                        <a href={l.profileUrl} target="_blank" rel="noreferrer">
+                        {l.profileUrl ? <a href={l.profileUrl} target="_blank" rel="noreferrer">
                           {l.name}
                           <ExternalLink size={12} />
-                        </a>
+                        </a> : <button className="text-button" onClick={() => setDetailId(l.id)}>{l.name}</button>}
                         <span>
                           {l.optedOut
                             ? "Opted out"
@@ -1295,7 +1325,7 @@ function Leads({
                       className={`relationship-select ${l.relationship}`}
                       aria-label={`Relationship for ${l.name}`}
                       value={l.relationship}
-                      disabled={busy || l.optedOut}
+                      disabled={busy || l.optedOut || !operate || !l.profileUrl}
                       onChange={(e) =>
                         void action(
                           () =>
@@ -1318,13 +1348,14 @@ function Leads({
                   </td>
                   <td>
                     <div className="row-actions">
+                      <button className="icon-button" title={`Contact details and evidence for ${l.name}`} aria-label={`Contact details and evidence for ${l.name}`} onClick={() => setDetailId(l.id)}><Search size={16}/></button>
                       {!l.optedOut && l.relationship === "connected" && (
                         <button
                           className="icon-button"
                           title={`Prepare a draft for ${l.name}`}
                           aria-label={`Prepare a draft for ${l.name}`}
                           disabled={
-                            busy ||
+                            busy || !operate ||
                             s.drafts.some(
                               (d) =>
                                 d.leadId === l.id && d.status !== "rejected",
@@ -1360,7 +1391,7 @@ function Leads({
                       )}
                       <button
                         className={`text-button ${l.optedOut ? "" : "danger-text"}`}
-                        disabled={busy}
+                        disabled={busy || !operate}
                         onClick={() =>
                           void action(
                             () =>
@@ -1428,22 +1459,25 @@ function Review({
   action: Action;
   demo: boolean;
 }) {
+  const review = usePermission("review");
   const [filter, setFilter] = useState("pending");
   const [selected, setSelected] = useState("");
   const [text, setText] = useState("");
+  const [baseRevision,setBaseRevision] = useState(1);
   const drafts = s.drafts.filter(
     (d) => filter === "all" || d.status === filter,
   );
   const draft = drafts.find((d) => d.id === selected) || drafts[0];
   useEffect(() => {
     setText(draft?.text || "");
-  }, [draft?.id]);
+    setBaseRevision(draft?.revision || 1);
+  }, [draft?.id,draft?.status]);
   const lead = s.leads.find((l) => l.id === draft?.leadId);
   const campaign = s.campaigns.find((c) => c.id === draft?.campaignId);
   const save = async (status: Draft["status"]) => {
     if (!draft) return;
     const ok = await action(
-      () => api(`/drafts/${draft.id}`, "PUT", { text, status }),
+      () => api(`/drafts/${draft.id}`, "PUT", { text, status, expectedRevision: baseRevision }),
       status === "pending"
         ? "Draft saved."
         : status === "approved"
@@ -1527,6 +1561,7 @@ function Review({
               </a>
             </div>
             <div className="draft-body">
+              {draft.status === "pending" && (draft.revision || 1) !== baseRevision && <div className="feature-error" role="alert">A teammate changed this draft. <button className="button" onClick={() => {setText(draft.text);setBaseRevision(draft.revision || 1);}}>Load latest revision</button></div>}
               <div className="draft-context">
                 <span>
                   <Layers3 size={15} />
@@ -1557,7 +1592,7 @@ function Review({
                   className="pitch-textarea"
                   value={text}
                   onChange={(e) => setText(e.target.value)}
-                  readOnly={draft.status !== "pending"}
+                  readOnly={draft.status !== "pending" || !review}
                   minLength={10}
                   maxLength={1500}
                   rows={8}
@@ -1580,7 +1615,7 @@ function Review({
               <div className="draft-actions">
                 <button
                   className="button danger-text"
-                  disabled={busy}
+                  disabled={busy || !review || (draft.revision || 1) !== baseRevision}
                   onClick={() => void save("rejected")}
                 >
                   <X size={16} />
@@ -1589,7 +1624,7 @@ function Review({
                 <div>
                   <button
                     className="button"
-                    disabled={busy || text.trim().length < 10}
+                    disabled={busy || !review || text.trim().length < 10 || (draft.revision || 1) !== baseRevision}
                     onClick={() => void save("pending")}
                   >
                     Save changes
@@ -1597,7 +1632,7 @@ function Review({
                   <button
                     className="button primary"
                     disabled={
-                      busy ||
+                      busy || !review || (draft.revision || 1) !== baseRevision ||
                       text.trim().length < 10 ||
                       draft.fit === "not_fit" ||
                       lead.optedOut ||
@@ -1778,7 +1813,7 @@ function ActivityPage({ s }: { s: State }) {
 }
 
 function Settings({
-  workspace: { state: s, health: h },
+  workspace: { state: s, health: h, auth: workspaceAuth },
   busy,
   action,
   addAccount,
@@ -1788,8 +1823,12 @@ function Settings({
   action: Action;
   addAccount: () => void;
 }) {
+  const manage = usePermission("manage");
   return (
     <>
+      <WorkspaceSetup workspace={{state:s,health:h,auth:workspaceAuth}} action={action} busy={busy}/>
+      <SettingsExtensions workspace={{state:s,health:h,auth:workspaceAuth}} action={action} busy={busy}/>
+      <CompanyFoundation workspace={{state:s,health:h,auth:workspaceAuth}} action={action} busy={busy}/>
       <div className="settings-grid">
         <section className="panel integration-card">
           <div className="integration-top">
@@ -1805,7 +1844,7 @@ function Settings({
           <div className="integration-detail">{h.sheets.detail}</div>
           <button
             className="button"
-            disabled={busy || h.mode === "demo"}
+            disabled={busy || !manage || h.mode === "demo"}
             onClick={() =>
               void action(
                 () => api("/integrations/reconnect", "POST"),
@@ -1827,14 +1866,14 @@ function Settings({
             </Badge>
           </div>
           <h2>Local AI · Ollama</h2>
-          <p>Assess lead fit and draft pitches on your own machine.</p>
+          <p>{h.hosted ? "Assess lead fit and draft pitches on your workspace server." : "Assess lead fit and draft pitches on your own machine."}</p>
           <div className="integration-detail">
             {h.ollama.detail}
             <span className="model-label">Model: {h.ollama.model}</span>
           </div>
           <button
             className="button"
-            disabled={busy}
+            disabled={busy || !manage}
             onClick={() =>
               void action(
                 () => api("/integrations/check", "POST"),
@@ -1870,54 +1909,13 @@ function Settings({
               <h2>Future AI examples</h2>
               <p>Save generation inputs, original drafts and future edits/review decisions in the control spreadsheet. No training or upload runs automatically. Earlier drafts have no reconstructed history. Demo examples stay labeled.</p>
             </div>
-            <button className="button" disabled={busy} aria-pressed={s.settings[0].trainingCollection}
+            <button className="button" disabled={busy || !manage} aria-pressed={s.settings[0].trainingCollection}
               onClick={() => void action(() => api("/settings/training", "PATCH", { enabled: !s.settings[0].trainingCollection }), "Example collection preference saved.")}>
               {s.settings[0].trainingCollection ? "Turn collection off" : "Enable collection"}
             </button>
           </div>
           <p>{s.trainingExamples.length} captured examples. Collection is {s.settings[0].trainingCollection ? "on" : "off"}. {h.mode === "demo" ? "Demo data resets on restart." : "Saved privately in your control spreadsheet."} Inspection, deletion, retention and reviewed exports are planned.</p>
           </div>
-          <div className="panel-header">
-            <div>
-              <h2>Connect your real workspace</h2>
-              <p>Configuration stays on your machine.</p>
-            </div>
-            <BookOpen size={20} />
-          </div>
-          <ol className="setup-list">
-            <li>
-              <strong>Create a dedicated control spreadsheet</strong>
-              <p>
-                The app creates Accounts, Sources, Campaigns, Relationships,
-                Jobs, Drafts, Activity, WorkspaceSettings, TrainingExamples and TrainingFeedback tabs. Keep this separate from your
-                existing lead sheets.
-              </p>
-            </li>
-            <li>
-              <strong>Configure Google access</strong>
-              <p>
-                Enable the Sheets API for a Google service account. Share the
-                control spreadsheet and lead sheets with its email. Keep its
-                credentials outside this repository.
-              </p>
-            </li>
-            <li>
-              <strong>Set your local environment</strong>
-              <p>
-                Copy <code>.env.example</code> to <code>.env</code>, set{" "}
-                <code>STORAGE_MODE=sheets</code>, the credentials file path, and{" "}
-                <code>CONTROL_SPREADSHEET_ID</code>. Restart the server.
-              </p>
-            </li>
-            <li>
-              <strong>Start your local model</strong>
-              <p>
-                Run <code>ollama pull {h.ollama.model}</code>. Real Sheets
-                campaigns can prepare drafts from supplied facts. Profile
-                extraction and sending come later.
-              </p>
-            </li>
-          </ol>
           <div className="note">
             <Clock3 size={16} />
             <span>
@@ -1935,6 +1933,7 @@ function Settings({
             <button
               className="icon-button"
               aria-label="Register account"
+              disabled={busy || !manage}
               onClick={addAccount}
             >
               <Plus size={19} />
@@ -1963,7 +1962,7 @@ function Settings({
             />
           )}
           <div className="account-panel-footer">
-            <button className="button" onClick={addAccount}>
+            <button className="button" disabled={busy || !manage} onClick={addAccount}>
               <Plus size={16} />
               Register account
             </button>
@@ -1987,6 +1986,7 @@ function CampaignForm({
   busy: boolean;
   action: Action;
 }) {
+  const operate = usePermission("operate");
   const [data, setData] = useState({
     name: campaign?.name || "",
     description: campaign?.description || "",
@@ -2011,7 +2011,7 @@ function CampaignForm({
   });
   const update = (key: keyof typeof data, value: string | number) =>
     setData((d) => ({ ...d, [key]: value }));
-  const readonly = campaign?.status === "running";
+  const readonly = campaign?.status === "running" || !operate;
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     const ok = await action(
@@ -2507,24 +2507,26 @@ function ImportForm({
                 <div className="mapping-grid">
                   {[
                     ["name", "Full name *"],
-                    ["profileUrl", "LinkedIn URL *"],
+                    ["profileUrl", "LinkedIn URL (or map email)"],
                     ["title", "Job title"],
                     ["company", "Company"],
                     ["notes", "Profile facts / notes"],
+                    ["email", "Email address"],
+                    ["website", "Company website"],
                     ["relationship", "Relationship"],
                     ["optedOut", "Opted out"],
                   ].map(([field, label]) => (
                     <label className="field" key={field}>
                       <span>{label}</span>
                       <select
-                        required={["name", "profileUrl"].includes(field)}
+                        required={field === "name"}
                         value={mapping[field] || ""}
                         onChange={(e) =>
                           setMapping((m) => ({ ...m, [field]: e.target.value }))
                         }
                       >
                         <option value="">
-                          {["name", "profileUrl"].includes(field)
+                          {field === "name"
                             ? "Select column"
                             : "Not mapped"}
                         </option>

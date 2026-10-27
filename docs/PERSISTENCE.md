@@ -1,8 +1,14 @@
 # Workspace storage, upgrades and recovery
 
+Current release: **0.4.0** (major 0 · update 4 · patch 0). See [version history](../CHANGELOG.md).
+
 Stage 1 implementation, 25 October 2026 (Asia/Karachi). Google Sheets remains the only persistent application database. Demo mode is deliberately in memory.
 
+27 October 2026: optional [company preparation](COMPANY_MIGRATION.md) adds Companies, CompanyMemberships and CompanyMigrations tabs. Existing workspaces remain unowned until an owner/admin previews and applies the migration. Scoped business records use schema v2; unowned records keep v1. The single-company runtime refuses missing/foreign ownership or a second/archived company before activation. Existing member access remains workspace-wide. Follow the company migration backup/downgrade instructions in addition to the original recovery rules below.
+
 ## Upgrade an existing Sheets workspace
+
+Local setup can now save encrypted connection/model infrastructure and activate Sheets without restarting; see [guided setup](LOCAL_SETUP.md). It does not copy demo records. Target campaigns/mailboxes are paused, interrupted intent is reconciled and old-workspace requests cannot mutate the new workspace. Google Sheets remains the application database. The original environment-based path below remains available for advanced/server deployments.
 
 1. Stop all BREKTRA processes using that control spreadsheet, on every computer.
 2. Make a Google Sheets copy of the dedicated control spreadsheet as a backup. Preserve your existing private `.env` and credentials outside the shareable package.
@@ -27,7 +33,7 @@ Atomic batch semantics follow [Google's Sheets batch documentation](https://deve
 
 After a connection/write conflict, stop other copies and outside edits, then use **Settings → Reconnect & sync**. The app reloads and validates remote records before resuming mutations; an unknown save may already have committed, so reconnect adopts its actual stored result. If a row is malformed, stop the app, restore/correct that row from the backup, then restart/reconnect. Do not delete job history to retry an action.
 
-An interrupted outbound intent becomes `uncertain` without creating another job. Its original intent time is preserved, and its allowance remains reserved even across day boundaries until resolved. It cannot be automatically retried. This build has no live outbound actions or user-facing uncertain-send resolution; the later verified-delivery milestone must add explicit outcome investigation/resolution before enabling sends.
+An interrupted outbound intent becomes `uncertain` without creating another job. Its original intent time is preserved, and its allowance remains reserved even across day boundaries until resolved. It cannot be automatically retried. The original LinkedIn path still has no live outbound actions. The outreach expansion adds a Gmail transport, sent-copy reconciliation and an audited admin not-sent resolution that requires another human review. See `HOSTED_SETUP.md`; Gmail acceptance is not confirmed recipient delivery. Live LinkedIn still needs its separate verified-delivery milestone.
 
 An interrupted generation becomes failed, because it cannot have sent anything. Restart the campaign explicitly to queue another generation. A pause, changed lead/campaign, opt-out or reconnect invalidates an in-flight generation. Quickly resuming or reversing the opt-out cannot revive that old job. Its outdated result cannot enter review.
 

@@ -1,9 +1,11 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { Activity, Campaign, Job, Lead, State } from "../shared/types.ts";
+import { requestContext } from "./context.ts";
 export const id = () => randomUUID();
 export const now = () => new Date().toISOString();
 export function emptyState(): State {
   return {
+    companies: [], companyMemberships: [], companyMigrations: [],
     accounts: [],
     sources: [],
     leads: [],
@@ -14,6 +16,8 @@ export function emptyState(): State {
     settings: [{ id: "workspace", trainingCollection: false }],
     trainingExamples: [],
     trainingFeedback: [],
+    mailboxes: [], sequences: [], enrollments: [], outreachActions: [], outreachReviews: [],
+    conversations: [], messages: [], enrichments: [], members: [], invitations: [],
   };
 }
 export function profileUrl(value: string): string {
@@ -38,6 +42,8 @@ export const leadId = (accountId: string, url: string) =>
     .update(`${accountId}:${profileUrl(url)}`)
     .digest("hex")
     .slice(0, 24);
+export const emailLeadId = (accountId: string, email: string) => createHash("sha256")
+  .update(`${accountId}:email:${email.trim().toLowerCase()}`).digest("hex").slice(0, 24);
 export function log(
   state: State,
   title: string,
@@ -56,6 +62,7 @@ export function log(
     simulated,
     campaignId,
     leadId,
+    actorId: requestContext.getStore()?.actorId,
     eventType: title === "Pitch ready for review" ? "pitch_review_required"
       : kind === "review" && title !== "Draft saved" ? "review_decision"
       : kind === "error" ? "essential_error" : undefined,
@@ -90,7 +97,8 @@ export function eligible(
   kind: Job["kind"],
 ): boolean {
   if (
-    lead.optedOut ||
+    lead.optedOut || lead.repliedAt ||
+    !lead.profileUrl ||
     lead.accountId !== campaign.accountId ||
     lead.sourceId !== campaign.sourceId
   )
@@ -110,6 +118,7 @@ export function eligible(
   return true;
 }
 export function queueCampaign(state: State, campaign: Campaign, retryFailed = true) {
+  if (state.sequences.some((s) => s.campaignId === campaign.id && s.enabled)) return 0;
   const demo =
     state.accounts.find((a) => a.id === campaign.accountId)?.status === "demo";
   let added = 0;
@@ -149,7 +158,7 @@ export function outboundCount(
   accountWide = false,
   date = new Date(),
 ) {
-  return state.jobs.filter(
+  const legacy = state.jobs.filter(
     (j) =>
       (accountWide
         ? j.accountId === campaign.accountId
@@ -160,6 +169,14 @@ export function outboundCount(
       (j.status === "uncertain" || dayKey(j.intentAt ?? j.updatedAt, campaign.timezone) ===
         dayKey(date.toISOString(), campaign.timezone)),
   ).length;
+  const sequence = state.outreachActions.filter((a) => {
+    const c = state.campaigns.find((c) => c.id === a.campaignId);
+    return (accountWide ? c?.accountId === campaign.accountId && a.kind !== "email" : a.campaignId === campaign.id) &&
+      (!kind || (kind === "request" ? a.kind === "linkedin_request" : a.kind !== "linkedin_request")) &&
+      ["running", "accepted", "simulated", "uncertain"].includes(a.status) &&
+      (a.status === "uncertain" || dayKey(a.intentAt || a.updatedAt, campaign.timezone) === dayKey(date.toISOString(), campaign.timezone));
+  }).length;
+  return legacy + sequence;
 }
 export function canDispatch(
   state: State,
@@ -170,7 +187,7 @@ export function canDispatch(
   if (campaign.status !== "running" || !inWorkingHours(campaign, date))
     return "Outside campaign working hours";
   const lead = state.leads.find((l) => l.id === job.leadId);
-  if (!lead || lead.optedOut) return "Lead is unavailable or opted out";
+  if (!lead || !lead.profileUrl || lead.optedOut || lead.repliedAt) return "Lead is unavailable, has no LinkedIn profile, opted out, or replied";
   if (job.kind === "request" && lead.relationship !== "not_connected")
     return "Lead is no longer eligible for a request";
   if (job.kind !== "request" && lead.relationship !== "connected")

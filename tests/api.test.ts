@@ -15,6 +15,7 @@ test("local API supports the campaign / review workflow and rejects invalid or c
         ...process.env,
         PORT: String(port),
         STORAGE_MODE: "demo",
+        BREKTRA_USE_ENV: "1",
         OLLAMA_URL: "http://127.0.0.1:1",
       },
       windowsHide: true,
@@ -56,7 +57,7 @@ test("local API supports the campaign / review workflow and rejects invalid or c
     assert.equal(initial.health.linkedin.connected, false);
     await t.test("a second server cannot control the same workspace on another port", async () => {
       const second = spawn(process.execPath, ["--import", "tsx", "server/index.ts", "--production"], {
-        cwd: process.cwd(), env: { ...process.env, PORT: "14312", STORAGE_MODE: "demo" }, windowsHide: true, stdio: "pipe",
+        cwd: process.cwd(), env: { ...process.env, PORT: "14312", STORAGE_MODE: "demo", BREKTRA_USE_ENV: "1" }, windowsHide: true, stdio: "pipe",
       });
       let failure = "";
       second.stderr.on("data", (b) => { failure += b; });
@@ -297,6 +298,44 @@ test("local API supports the campaign / review workflow and rejects invalid or c
       assert.equal(state.trainingFeedback[1].exampleId, example.id);
       assert.equal(state.trainingExamples.find((e) => e.id === example.id)!.original!.text, example.original!.text);
       assert.ok(state.activity.some((e) => e.eventType === "pitch_review_required"));
+    });
+    await t.test("sequence and inbox APIs preserve review versions, pauses, opt-outs and safe evidence checks", async () => {
+      const created = await request("/api/campaigns", "POST", {...initial.state.campaigns[0], name:"Email sequence API test", mode:"pitching", startHour:0, endHour:24});
+      assert.equal(created.status,201);
+      const campaignId=created.body.id, mailboxId=initial.state.mailboxes[0].id;
+      assert.equal((await request(`/api/mailboxes/${mailboxId}`,"PATCH",{sendingEnabled:true,dailyBudget:20})).status,200);
+      const sequence={enabled:true,mailboxId,steps:[{id:"intro",kind:"email",delayHours:0,subject:"Question for {{leadCompany}}",body:"Hi {{firstName}}, would a conversation be useful?"}]};
+      assert.equal((await request(`/api/campaigns/${campaignId}/sequence`,"PUT",sequence)).status,200);
+      assert.equal((await request(`/api/campaigns/${campaignId}/sequence`,"PUT",{...sequence,steps:[...sequence.steps,...sequence.steps]})).status,400);
+      const lead=initial.state.leads[2];
+      assert.equal((await request(`/api/campaigns/${campaignId}/enrollments`,"POST",{leadIds:[lead.id]})).status,200);
+      assert.equal((await request(`/api/campaigns/${campaignId}/status`,"POST",{status:"running"})).status,200);
+      let action:any;
+      for(let i=0;i<100;i++) {
+        action=(await request("/api/workspace")).body.state.outreachActions.find((a:any)=>a.campaignId===campaignId);
+        if(action)break;await delay(100);
+      }
+      assert.ok(action,"Sequence did not create a review item");assert.equal(action.status,"pending");
+      await request(`/api/campaigns/${campaignId}/status`,"POST",{status:"paused"});
+      const edited={expectedRevision:action.revision,subject:action.subject,body:"Hi Amara, would a short conversation about your workflow be useful?",status:"pending"};
+      assert.equal((await request(`/api/outreach/${encodeURIComponent(action.id)}`,"PUT",edited)).status,200);
+      assert.equal((await request(`/api/outreach/${encodeURIComponent(action.id)}`,"PUT",{...edited,status:"approved"})).status,400);
+      let state=(await request("/api/workspace")).body.state;
+      const latest=state.outreachActions.find((a:any)=>a.id===action.id);
+      assert.equal(latest.revision,2);
+      assert.equal((await request(`/api/outreach/${encodeURIComponent(action.id)}`,"PUT",{...edited,expectedRevision:2,status:"approved"})).status,200);
+      const waiting=(await request("/api/outreach/status")).body.find((a:any)=>a.id===action.id);
+      assert.match(waiting.waiting,/paused/);
+      assert.equal((await request(`/api/leads/${lead.id}`,"PATCH",{optedOut:true})).status,200);
+      state=(await request("/api/workspace")).body.state;assert.equal(state.outreachActions.find((a:any)=>a.id===action.id).status,"cancelled");
+      assert.ok(state.outreachReviews.some((r:any)=>r.actionId===action.id&&r.decision==="approved"));
+      const conversation=initial.state.conversations[0],path=`/api/conversations/${encodeURIComponent(conversation.id)}`;
+      assert.equal((await request(path,"PATCH",{unread:false,status:"done"})).status,200);
+      assert.equal((await request(`${path}/reply`,"POST",{body:"Thanks, here are the details.",expectedUpdatedAt:"2020-01-01T00:00:00Z"})).status,400);
+      assert.equal((await request(`${path}/reply`,"POST",{body:"Thanks, here are the details.",expectedUpdatedAt:conversation.updatedAt})).status,201);
+      assert.equal((await request(`${path}/reply`,"POST",{body:"Do not create a duplicate reply.",expectedUpdatedAt:conversation.updatedAt})).status,400);
+      assert.equal((await request(`/api/leads/${lead.id}/enrich`,"POST",{website:"https://127.0.0.1"})).status,400);
+      assert.equal((await request(`/api/leads/${lead.id}/approval`,"PATCH",{decision:"approved"})).status,400); // Still opted out.
     });
   } finally {
     child.kill();

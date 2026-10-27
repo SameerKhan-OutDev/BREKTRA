@@ -1,7 +1,11 @@
 # BREKTRA implementation plan
 
+Current release: **0.4.0** (major 0 · update 4 · patch 0). See [version history](../CHANGELOG.md).
+
 Updated: 25 October 2026 (Asia/Karachi).
 Status: implementation started with stage 1. See `IMPLEMENTATION_STATUS.md` for delivered behavior and validation limits. Live LinkedIn integration remains unavailable.
+
+27 October 2026 extension: implementation of the [twelve-shard company roadmap](UPDATE_0.3.0_IMPLEMENTATION_PLAN.md) has started. The first 0.3.0 build adds [reviewed single-company preparation](COMPANY_MIGRATION.md); multiple companies remain blocked pending complete isolation. The new specification requires a compliant, authorized integration before enabling live LinkedIn; earlier stages below do not override that gate. No new live LinkedIn capability is delivered.
 
 ## What we are building
 
@@ -27,6 +31,8 @@ LinkedIn login, real profile checks, live requests/messages, reply detection, so
 Done when: restart, overlapping edits and connection-failure tests preserve progress and cannot cause duplicate sends. Invalid saved data gives a useful error instead of starting campaigns.
 
 ## 2. Connect accounts and services
+
+Local setup portion delivered in 0.4.0: Settings provides Google credential selection, read-only sheet checks, encrypted configuration and activation without restarting, plus installed-Ollama start/download/selection controls. Google authorization/sharing and initial Ollama installation remain user actions. This does not implement LinkedIn sessions or establish live-provider validation. See `LOCAL_SETUP.md`.
 
 - Add Settings controls to configure Google Sheets and the local AI model.
 - Let you open LinkedIn and log in yourself. Remember a separate browser session for each account and confirm which account is logged in.
@@ -174,4 +180,4 @@ For every completed stage:
 
 Actual service testing requires dedicated Sheets credentials/control and CRM spreadsheets, intended dropdown values, Ollama with its model, and an interactively logged-in LinkedIn account with intended test recipients. Do not include these private resources in the release.
 
-Automatic follow-up sequences, simultaneous use of the same spreadsheet from multiple computers, cloud hosting and a replacement database remain outside this first backend build. Reply detection and stopping future queued outreach are included.
+The user subsequently authorized automatic follow-up sequences, Gmail outreach, sourced enrichment, a conversation inbox and a hosted team workspace. See `OUTREACH_EXPANSION_PLAN.md` for that extension and its acceptance rules. Hosted team access uses one shared workspace server/runner, not simultaneous independent desktop writers. A replacement application database and horizontally scaled Sheets writers remain outside scope. The original live LinkedIn integration stages still apply.

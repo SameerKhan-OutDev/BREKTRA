@@ -9,6 +9,7 @@ import { emptyState, now } from "../server/domain.ts";
 import { demoState } from "../server/seed.ts";
 import { Store } from "../server/store.ts";
 import { encodeRecord } from "../server/schema.ts";
+import { prepareCompanyMigration, companyFingerprint, previewCompanyMigration } from "../server/company.ts";
 
 // Exercise the real OAuth/Sheets adapter against a stateful HTTP double. No
 // real spreadsheet or credentials are required or claimed by these tests.
@@ -134,6 +135,31 @@ test("Sheets persistence safety", async (t) => {
       bad.accountId = "missing";
       tabs.get("Relationships")![1][1] = encodeRecord(bad);
       await assert.rejects(store.recover(), /missing account/);
+    });
+    await t.test("reviewed company ownership and manifest commit atomically and survive a fresh adapter", async () => {
+      reset();
+      const adapter = new Sheets(credentials, "control-test");
+      await adapter.initialize();
+      const legacy = demoState();
+      await adapter.save(legacy);
+      const store = new Store(legacy, adapter), before = writes.length;
+      await store.change((state) => Object.assign(state, prepareCompanyMigration(state, {
+        name: "Original company", fingerprint: companyFingerprint(state), actorId: "local-owner", backupConfirmed: true,
+      })));
+      assert.equal(writes.length, before + 1);
+      assert.equal(tabs.get("Companies")!.length, 2);
+      assert.equal(tabs.get("CompanyMigrations")!.length, 2);
+      assert.equal(JSON.parse(tabs.get("Relationships")![1][1]).schemaVersion, 2);
+      const restored = await new Sheets(credentials, "control-test").initialize();
+      assert.deepEqual(restored.companies, store.state.companies);
+      assert.deepEqual(restored.leads, store.state.leads);
+      assert.equal(previewCompanyMigration(restored).blockers.length, 1);
+      const bad = JSON.parse(tabs.get("Relationships")![1][1]);
+      delete bad.record.companyId;
+      tabs.get("Relationships")![1][1] = JSON.stringify(bad);
+      const count = writes.length;
+      await assert.rejects(new Sheets(credentials, "control-test").initialize(), /company ownership/);
+      assert.equal(writes.length, count);
     });
     await t.test("external edits pause instead of overwriting; reconnect adopts remote records", async () => {
       reset();

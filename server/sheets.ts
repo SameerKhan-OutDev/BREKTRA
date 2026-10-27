@@ -3,7 +3,11 @@ import { createSign } from "node:crypto";
 import type { State } from "../shared/types.ts";
 import { emptyState } from "./domain.ts";
 import { decodeRecord, encodeRecord, migrateState, validateState } from "./schema.ts";
+import { assertSingleCompanyRuntime } from "./company-schema.ts";
 export const collections = {
+  companies: "Companies",
+  companyMemberships: "CompanyMemberships",
+  companyMigrations: "CompanyMigrations",
   accounts: "Accounts",
   sources: "Sources",
   leads: "Relationships",
@@ -14,8 +18,19 @@ export const collections = {
   settings: "WorkspaceSettings",
   trainingExamples: "TrainingExamples",
   trainingFeedback: "TrainingFeedback",
+  mailboxes: "Mailboxes",
+  sequences: "Sequences",
+  enrollments: "Enrollments",
+  outreachActions: "OutreachActions",
+  outreachReviews: "OutreachReviews",
+  conversations: "Conversations",
+  messages: "Messages",
+  enrichments: "Enrichment",
+  members: "Members",
+  invitations: "Invitations",
 } as const;
 export const quoteTab = (tab: string) => `'${tab.replaceAll("'", "''")}'`;
+export interface ServiceAccountCredentials { type: "service_account"; client_email: string; private_key: string }
 const b64 = (value: object) =>
   Buffer.from(JSON.stringify(value)).toString("base64url");
 export class Sheets {
@@ -27,14 +42,13 @@ export class Sheets {
     { sheetId: number; rowCount: number; columnCount: number }
   >();
   constructor(
-    private credentialsPath: string,
+    private credentialsPath: string | ServiceAccountCredentials,
     readonly controlId: string,
   ) {}
   private async auth() {
     if (this.token && Date.now() < this.expiresAt) return this.token;
-    const credentials = JSON.parse(
-      await readFile(this.credentialsPath, "utf8"),
-    );
+    const credentials = typeof this.credentialsPath === "string"
+      ? JSON.parse(await readFile(this.credentialsPath, "utf8")) : this.credentialsPath;
     if (!credentials.client_email || !credentials.private_key)
       throw new Error(
         "Service account file must contain client_email and private_key.",
@@ -135,8 +149,19 @@ export class Sheets {
       });
       await this.tabs(this.controlId);
     }
-    const state = emptyState();
     const snapshot = await this.readControl();
+    const validated = this.decodeSnapshot(snapshot);
+    this.savedRows = snapshot;
+    return validated;
+  }
+  // Read-only setup check: no tab creation, headers, writes or recovery actions.
+  async inspect() {
+    const available = await this.tabs(this.controlId);
+    const state = this.decodeSnapshot(await this.readControl(available));
+    return { state, missingTabs: Object.values(collections).filter((t) => !available.includes(t)) };
+  }
+  private decodeSnapshot(snapshot: Map<string, string[][]>) {
+    const state = emptyState();
     for (const [key, tab] of Object.entries(collections)) {
       const rows = snapshot.get(tab)!;
       if (rows.length && (rows[0][0] !== "id" || rows[0][1] !== "data"))
@@ -149,23 +174,28 @@ export class Sheets {
       if (key !== "settings" || records.length) (state as any)[key] = records;
     }
     const validated = migrateState(state);
+    assertSingleCompanyRuntime(validated);
     validated.activity.sort((a, b) => b.at.localeCompare(a.at));
-    this.savedRows = snapshot;
     return validated;
   }
-  private async readControl(): Promise<Map<string, string[][]>> {
-    const ranges = Object.values(collections).map((tab) => `ranges=${encodeURIComponent(`${quoteTab(tab)}!A:B`)}`).join("&");
+  private async readControl(available: string[] = Object.values(collections)): Promise<Map<string, string[][]>> {
+    const titles = Object.values(collections).filter((t) => available.includes(t));
+    if (!titles.length) return new Map(Object.values(collections).map((t) => [t, []]));
+    const ranges = titles.map((tab) => `ranges=${encodeURIComponent(`${quoteTab(tab)}!A:B`)}`).join("&");
     const result = await this.request(`${this.controlId}/values:batchGet?${ranges}&valueRenderOption=UNFORMATTED_VALUE`);
-    if (result.valueRanges?.length !== Object.keys(collections).length)
+    if (result.valueRanges?.length !== titles.length)
       throw new Error("Incomplete control spreadsheet response. Reconnect before saving.");
-    return new Map(Object.values(collections).map((tab, index) => {
+    const snapshot = new Map<string, string[][]>(Object.values(collections).map((t) => [t, []]));
+    titles.forEach((tab, index) => {
       const rows = (result.valueRanges[index].values ?? []).map((r: unknown[]) => [String(r[0] ?? ""), String(r[1] ?? "")]) as string[][];
       while (rows.length && rows.at(-1)!.every((cell) => !cell)) rows.pop();
-      return [tab, rows];
-    }));
+      snapshot.set(tab, rows);
+    });
+    return snapshot;
   }
   async save(state: State) {
     validateState(state);
+    assertSingleCompanyRuntime(state);
     if (this.savedRows.size !== Object.keys(collections).length)
       throw new Error("Load and validate the control spreadsheet before saving.");
     // Only one computer may control a spreadsheet. Detect edits between our saves;

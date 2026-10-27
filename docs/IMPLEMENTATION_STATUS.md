@@ -1,6 +1,66 @@
 # Foundation status
 
+Current release: **0.4.0** (major 0 · update 4 · patch 0). See [version history](../CHANGELOG.md).
+
 The first milestone is a runnable local workspace with real integration adapters and a simulated outbound execution path.
+
+## 27 October 2026 - release 0.4.0: guided local setup
+
+- Replaced `.env`/terminal instructions in Settings with credential selection, service-account email copying, spreadsheet URL/ID, a read-only access/data check and a checked connection action. Missing control tabs are created only on connection. Checks expire and cannot be reused; changed current/target data requires a fresh check.
+- Local setup choices and credentials save through existing encrypted private storage and reload on startup. Activation switches the app to real Sheets mode immediately without importing demo data. Target campaigns and mailbox sending are paused and interrupted intents remain uncertain; concurrent mutations and requests from the old workspace cannot overwrite newly loaded state. Single-writer locking remains enforced.
+- Added local buttons to start an installed Windows Ollama, download curated models with streamed progress/cancel/retry, and select compatible installed models. Successful model installation is verified before it is selected. No model was downloaded during automated testing.
+- Management permissions protect setup; hosted/authenticated or explicit environment-only configurations disable local mutations. Advanced `BREKTRA_USE_ENV=1` preserves operator/test control. Existing real connections retain reconnect rather than exposing unsafe workspace switching.
+- Updated setup documentation and packaging. Google account authorization, key creation, sheet sharing and first-time Ollama installation still require the user. Live Google/Ollama acceptance and browser visual verification remain unverified; tests use mocks/local HTTP and actual local encryption.
+
+Validation: production build and all 101 automated checks pass (92 existing checks plus 9 setup checks), including read-only/expired/stale checks, safe activation, encryption/reload, permission denial and model failure/cancel/retry. Both distributions pass fresh-extraction verification with clean demo/setup status, private-file allowlists (26 Windows files, 20 server files), release/API/document identity, frontend serving, and bundled company preparation. Windows additionally verifies the setup UI asset, repeat-start reuse, shutdown, ownership reacquisition and demo reset. The server bundle rejects incomplete hosted configuration. No live send, actual model download or production workspace setup was performed; real provider and visual walkthrough checks remain unverified.
+
+Artifacts: `D:\BREKTRA\release\BREKTRA-Windows-x64.zip` and `D:\BREKTRA\release\BREKTRA-Server.tar.gz`. Both contain `LOCAL_SETUP.md`. Local source/documents are suitable for GitHub; private infrastructure and generated archives remain excluded by `.gitignore`.
+
+## 27 October 2026 - release 0.3.0: company-preparation foundation
+
+Implementation of the twelve-shard roadmap is authorized and started. This release delivers optional **single-company preparation**, not the completed shared-company MVP.
+
+- Settings → Company setup provides a read-only complete-state preview, record counts, unresolved-send counts and conservative role mapping. Applying requires a backup acknowledgement, an unchanged state fingerprint and no in-flight send/generation. No production data migrates automatically.
+- Added Companies, CompanyMemberships and immutable CompanyMigrations records. Scoped business records and historical input snapshots retain IDs, facts, reviews, provider IDs and uncertainty while gaining company ownership. Campaigns and mailbox sending are paused at cutover. Owned records use schema v2 so older apps reject them rather than silently discard scope.
+- Validates ownership/reference closure, memberships and active admins. New single-company writes inherit scope; ownership edits/foreign references fail. Legacy team changes mirror into prepared memberships. Existing workspace permissions remain unchanged; the proposed company permission matrix is a tested contract only.
+- Runtime refuses multiple/archived companies on load, mutation and reconnect before publishing or saving them. P1.2 API/service/worker isolation, P1.3 company switching and the remaining roadmap are not implemented.
+- Added migration/downgrade/restore guidance and synchronized roadmap status. Source specification and existing uncommitted application work are preserved.
+
+Baseline validation: build and all 73 existing checks passed; both 0.2.0 distribution workflows and fresh-extraction verifiers passed before editing. Foundation validation: build and 92 checks passed, including new ownership/migration/recovery checks, mocked atomic Sheets persistence and authenticated HTTP admin/stale-preview workflows.
+
+Both 0.3.0 distribution bundles passed fresh-extraction verification: API/VERSION.txt release identity, clean initial state, frontend/assets, bundled document hashes, actual bundled demo company preview/apply and private-file allowlists (25 Windows files, 19 server files). Windows repeat-start reuse, shutdown, ownership reacquisition and demo reset passed; the server bundle rejected incomplete hosted configuration. These are local/demo packaging checks, not external deployment or live Google acceptance.
+
+Artifacts: `D:\BREKTRA\release\BREKTRA-Windows-x64.zip` and `D:\BREKTRA\release\BREKTRA-Server.tar.gz`. The archives include the roadmap and company migration guide; configured personal/runtime/company data is excluded. Existing configured copies need a restart to load rebuilt code.
+
+Limits: no dedicated Google workspace credentials/recipient are configured here, so live Sheets mutation/backup restore, Gmail OAuth/recipient testing, actual Ollama and external deployment are unverified. A 5,000-lead CPU-only preview/preparation check measured 61/62 ms; it does not validate Sheets capacity or quotas. Browser visual verification was attempted but the automation tool stopped it because it could not verify the browser URL. No visual pass or multi-company privacy is claimed.
+
+## 26 October 2026 - release 0.2.0 (update 2, patch 0)
+
+Established MAJOR.UPDATE.PATCH numbering for the existing outreach feature set, using package.json as the source for UI/API and generated package metadata. Added current-release labels across maintained Markdown documents, a changelog, bundled ABOUT/version history, build-time consistency checking, and the standing requirement to keep versions aligned with actual delivered work. Earlier dated entries retain their historical meaning and validation limits.
+
+Validation: version consistency across all 9 maintained Markdown documents, TypeScript/Vite build, and all 73 automated checks pass. Both distribution bundles passed fresh-extraction checks for matching API/VERSION.txt release numbers, clean workspace, frontend/assets, bundled document hashes, and private-file allowlists (23 Windows files and 17 server files). Windows launcher repeat-start reuse, shutdown, and ownership reacquisition passed; the server bundle rejected incomplete hosted configuration. No external service validation or new LinkedIn transport is implied.
+
+Release paths: `D:\BREKTRA\release\BREKTRA-Windows-x64.zip` and `D:\BREKTRA\release\BREKTRA-Server.tar.gz`. Archive names stay stable; each bundle contains VERSION.txt identifying 0.2.0.
+
+## 25 October 2026 - outreach expansion and shared team server
+
+The user authorized implementing the five missing product areas and selected Gmail/Google Workspace plus a single hosted workspace server accessed by teammate browsers, with Ollama on that server. `OUTREACH_EXPANSION_PLAN.md` records the scope and `HOSTED_SETUP.md` records setup/acceptance limits.
+
+Implemented in source:
+
+- Campaign-local sequence editor with ordered steps, delays, explicit enrollment, separate lead approval, per-message exact-version review, legacy-queue isolation, schedule/shared budgets, reply/opt-out/rejection stops and audited explicit resumption. Template values use supplied facts only. LinkedIn steps simulate in demo and remain blocked in real workspaces.
+- Gmail API authorization-code/state/PKCE flow, encrypted server-side refresh/client credentials, explicit mailbox sending switch, shared budgets, plain-text MIME sending, stable Message-IDs, known rejection versus unknown-result handling, sent-copy reconciliation and audited admin not-sent resolution followed by another review. Gmail acceptance is never labeled recipient delivery. Real Google authorization has not been performed.
+- One new Inbox navigation item: conversation list/pane, safe plain text, unread/done, team assignment, exact-text reviewed replies, scoped/paginated provider sync and duplicate prevention. New incoming messages invalidate stale reply approval. Manual replies stop automatic follow-ups. Closed, finished conversations stop consuming active tracking capacity. Incomplete sync blocks sending.
+- Lead detail/evidence dialog with public HTTPS company-page metadata, listed website email evidence, domain MX checks, source/time and accept/reject. Private/reserved destinations, credentials/custom ports, oversized/invalid pages and unsafe redirects are blocked; DNS is pinned for the TLS connection. No guessed personal addresses/profile facts, paid enrichment database or deliverability guarantee. Imports can now use name plus email without a LinkedIn URL; such leads cannot enter LinkedIn steps.
+- Explicit hosted mode: one Sheets-backed workspace/runner, HTTPS public-origin configuration, owner bootstrap, separate password sessions, expiring one-use invitation links, owner/admin/operator/reviewer/viewer permissions, session revocation, owner recovery and actor audit records. API guards cover original routes too; draft/sequence revision checks prevent stale team edits. All team roles read the shared workspace; assignments are not row-level privacy. No external hosting was provisioned.
+- Progressive disclosure: only Inbox is added to navigation; sequences belong to campaigns, enrichment to lead details, and Gmail/team controls are collapsed in Settings. Original campaigns remain unchanged unless a sequence is enabled. Browser demo walkthrough verified Inbox-to-review and sequence setup, with layout checks at normal, 800px and 390px widths and no horizontal overflow. Screenshot: `docs/outreach-preview.png` (demo only).
+- A clean hosted server bundle (`pnpm package:server`), startup/allowlist verifier (`pnpm verify:server`), environment template and optional Dockerfile. Docker execution and external DNS/TLS deployment remain unverified; Node bundle smoke tests are reported separately from real deployment.
+
+Validation: TypeScript/Vite build and all 73 automated checks pass. The tests use stateful mocked Gmail/Sheets, local HTTP browser-session equivalents and real local credential encryption. They cover permissions, invitations/password changes, version conflicts, exact payloads, MIME/header safety, sync pagination/reply races, stopped/rejected/unknown sends, result-save failures/restart, SSRF guards, source evidence and email-only leads. No real invitation/email was sent. Fresh Windows ZIP extraction passed startup, health/workspace, frontend/assets, document hashes, repeat-start reuse, shutdown and ownership reacquisition. The server archive passed standalone bundle startup/API/frontend/document checks and rejected incomplete hosted configuration. All 19 Windows archive files and 13 server archive files matched their allowlists, excluding private credentials, sessions and runtime data. Docker and external TLS/Google deployment were not tested. All earlier entries below are historical.
+
+Still required before live use: dedicated Sheets service testing; Google OAuth project/consent/test-user setup and any production verification; an intended test mailbox/recipient; hosted domain/TLS/private storage/backup deployment; actual hosted Ollama validation. Live LinkedIn login/profile checks/invitations/messages, source CRM writeback, Windows system notifications, advanced branching, paid/profile enrichment, multi-tenant SaaS/horizontal scaling and the remainder of the training-data privacy/export controls are not delivered by this expansion.
+
+Release targets: `D:\BREKTRA\release\BREKTRA-Windows-x64.zip` and `D:\BREKTRA\release\BREKTRA-Server.tar.gz`. Share these fresh allowlisted archives, never a configured working directory.
 
 ## 25 October 2026 - stage 1 backend implementation
 

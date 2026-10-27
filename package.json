@@ -1,14 +1,16 @@
 {
   "name": "brektra",
-  "version": "0.1.0",
+  "version": "0.4.0",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "tsx server/index.ts",
-    "build": "tsc --noEmit && vite build",
+    "build": "node scripts/verify-version.mjs && tsc --noEmit && vite build",
     "start": "tsx server/index.ts --production",
     "test": "tsx --test tests/*.test.ts",
-    "package:windows": "pnpm build && node scripts/package-portable.mjs"
+    "package:windows": "pnpm build && node scripts/package-portable.mjs",
+    "package:server": "pnpm build && node scripts/package-server.mjs",
+    "verify:server": "node scripts/verify-server.mjs"
   },
   "dependencies": {
     "dotenv": "^17.2.3",

@@ -6,7 +6,7 @@ export class Runner {
   private lastCampaign = "";
   constructor(private store: Store, private generate = generateDraft) {}
   async tick() {
-    if (this.busy || this.store.syncError) return;
+    if (this.busy || this.store.syncError || this.store.changingWorkspace) return;
     this.busy = true;
     let selected = "";
     try {
@@ -83,7 +83,7 @@ export class Runner {
         const currentLead = state.leads.find((l) => l.id === lead.id)!;
         const currentCampaign = state.campaigns.find((c) => c.id === campaign.id)!;
         const example = state.trainingExamples.find((e) => e.jobId === job.id);
-        if (currentLead.optedOut || currentCampaign.status !== "running" ||
+        if (currentLead.optedOut || currentLead.repliedAt || currentCampaign.status !== "running" ||
             JSON.stringify(currentLead) !== JSON.stringify(lead) ||
             JSON.stringify(currentCampaign) !== JSON.stringify(campaign)) {
           current.status = "cancelled";

@@ -95,6 +95,7 @@ export function demoState(): State {
       relationship: relationship as (typeof s.leads)[number]["relationship"],
       optedOut: false,
       notes,
+      outreachApproval: "approved" as const,
     };
   });
   s.campaigns = [
@@ -150,5 +151,14 @@ export function demoState(): State {
       simulated: false,
     },
   ];
+  for (const lead of s.leads) lead.email = `${lead.name.split(" ")[0].toLowerCase()}@example.invalid`;
+  s.mailboxes = [{ id: "demo-mailbox", email: "alex@example.invalid", name: "Sample Gmail mailbox", provider: "demo", status: "connected", sendingEnabled: false, dailyBudget: 20, syncError: "" }];
+  s.conversations = [{ id: "demo-conversation", mailboxId: "demo-mailbox", leadId: s.leads[0].id,
+    campaignId: "demo-campaign", providerThreadId: "demo-thread", subject: "Comparing outreach workflows",
+    updatedAt: now(), unread: true, status: "open", assigneeId: "", simulated: true, messageVersion: 1 }];
+  s.messages = [{ id: "demo-message", conversationId: "demo-conversation", providerMessageId: "demo-provider-message",
+    direction: "inbound", from: s.leads[0].email!, to: "alex@example.invalid", subject: "Comparing outreach workflows",
+    body: "Thanks for reaching out. Could you share a little more about how your team helps with outreach workflows?\n\nThis is sample conversation content; no email was received or sent.",
+    at: now(), messageId: "<demo-incoming@example.invalid>", simulated: true }];
   return s;
 }
