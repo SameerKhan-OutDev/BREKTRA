@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { Campaign, Lead } from "../shared/types.ts";
 import { renderContext } from "../shared/campaign.ts";
+import { installedOllama } from "./ollama-installation.ts";
 const outputSchema = z.object({
   fit: z.enum(["fit", "not_fit", "needs_review"]),
   evidence: z.array(z.string().min(1).max(500)).min(1).max(8),
@@ -41,7 +42,9 @@ export async function aiHealth() {
       connected: false,
       models: [],
       model: model(),
-      detail: "Start Ollama locally to enable AI-generated drafts.",
+      detail: process.platform === "win32" && !installedOllama()
+        ? "Ollama is not installed or its installation could not be found. Use Install Ollama, finish the Windows installer, then click Start Ollama."
+        : "Ollama is not responding. Click Start Ollama, or open your installed Ollama app and check the connection.",
     };
   }
 }

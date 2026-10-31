@@ -13,7 +13,9 @@ const timezone = text.refine((value) => {
   catch { return false; }
 }, "Invalid timezone");
 const account = z.object({ ...ownership, id: key, name: key, role: text, initials: text,
-  dailyBudget: z.number().int().min(1).max(100), status: z.enum(["demo", "not_connected"]) }).passthrough();
+  dailyBudget: z.number().int().min(1).max(100), status: z.enum(["demo", "not_connected"]),
+  linkedin: z.object({ ownerId: key, subject: z.string().regex(/^[a-f0-9]{64}$/), connectionId: key,
+    status: z.enum(["connected", "needs_login", "disconnected"]), connectedAt: at, checkedAt: at, expiresAt: at }).strict().optional() }).passthrough();
 const source = z.object({ ...ownership, id: key, name: key, spreadsheetId: text, tab: key,
   mapping: z.record(text, text), importedAt: at, count: z.number().int().nonnegative() }).passthrough();
 const lead = z.object({ ...ownership, id: key, sourceId: key, accountId: key, name: key, title: text,
@@ -64,6 +66,11 @@ export function validateState(input: unknown): State {
   const s = result.data;
   validateCompanyOwnership(s as State);
   const fail = (message: string): never => { throw new Error(`Invalid saved workspace: ${message}. Correct the control spreadsheet, then reconnect.`); };
+  const connectedAccounts = s.accounts.filter((a) => a.linkedin);
+  if (new Set(connectedAccounts.map((a) => a.linkedin!.subject)).size !== connectedAccounts.length) fail("duplicate LinkedIn accounts");
+  for (const a of connectedAccounts) {
+    if (a.status === "demo" || (a.linkedin!.ownerId !== "local-owner" && !s.members.some((m) => m.id === a.linkedin!.ownerId))) fail(`LinkedIn account ${a.id} has invalid ownership`);
+  }
   for (const [name, rows] of Object.entries(s)) {
     if (new Set(rows.map((r) => r.id)).size !== rows.length) fail(`duplicate IDs in ${name}`);
   }
@@ -120,8 +127,11 @@ export function validateState(input: unknown): State {
   for (const m of s.messages) if (!has(s.conversations, m.conversationId)) fail(`message ${m.id} has no conversation`);
   for (const r of s.outreachReviews) if (!has(s.outreachActions, r.actionId)) fail(`outreach review ${r.id} has no action`);
   for (const e of s.enrichments) if (!has(s.leads, e.leadId)) fail(`enrichment ${e.id} has no lead`);
+  for (const m of s.teamMessages) if (!has(s.members, m.senderId) || !has(s.members, m.recipientId)) fail(`team message ${m.id} has missing members`);
   for (const i of s.invitations) if (!has(s.members, i.memberId)) fail(`invitation ${i.id} has no member`);
   if (new Set(s.members.map((m) => m.email.toLowerCase())).size !== s.members.length) fail("duplicate team emails");
+  const usernames = s.members.flatMap(m => m.username ? [m.username.toLowerCase()] : []);
+  if (new Set(usernames).size !== usernames.length) fail("duplicate team usernames");
   if (s.members.length && !s.members.some((m) => m.role === "owner" && m.status === "active")) fail("workspace needs an active owner");
   return s as State;
 }

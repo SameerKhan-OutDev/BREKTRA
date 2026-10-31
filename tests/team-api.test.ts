@@ -26,16 +26,24 @@ test("authenticated workspace protects API data and enforces team roles/invitati
     const workspace=await request("/workspace","GET",undefined,owner.cookie);assert.equal(workspace.status,200);assert.equal(workspace.body.auth.user.role,"owner");
     assert.ok(!JSON.stringify(workspace.body).includes("Owner-Test-Password-Only"));
     const ownerId=workspace.body.auth.user.id;
+    assert.equal((await request("/team/username","PATCH",{username:"owner.name",current:"wrong"},owner.cookie)).status,400);
+    assert.equal((await request("/team/username","PATCH",{username:"Owner.Name",current:"Owner-Test-Password-Only"},owner.cookie)).status,200);
+    const usernameLogin=await request("/auth/login","POST",{identifier:" OWNER.NAME ",password:"Owner-Test-Password-Only"});
+    assert.equal(usernameLogin.status,200);
+    assert.equal((await request("/auth/status","GET",undefined,usernameLogin.cookie)).body.user.username,"owner.name");
+    assert.equal((await request("/team/username","PATCH",{username:"bad@name",current:"Owner-Test-Password-Only"},owner.cookie)).status,400);
+    assert.equal((await request("/team/username","PATCH",{username:"anonymous",current:"Owner-Test-Password-Only"})).status,401);
     assert.equal((await request(`/team/members/${ownerId}`,"PATCH",{role:"viewer",status:"active"},owner.cookie)).status,400);
     const invite=await request("/team/invitations","POST",{name:"Viewer",email:"viewer@example.invalid",role:"viewer"},owner.cookie);assert.equal(invite.status,201);
+    assert.equal(invite.body.scope,"local"); assert.deepEqual(invite.body.urls,[invite.body.url]);
     const token=new URL(invite.body.url).hash.slice(6);
-    assert.equal((await request("/auth/accept","POST",{token,password:"Viewer-Test-Password"})).status,200);
+    assert.equal((await request("/auth/accept","POST",{token,password:"Viewer-Test-Password",username:"viewer.name"})).status,200);
     assert.equal((await request("/auth/accept","POST",{token,password:"Other-Test-Password"})).status,400);
     const viewer=await request("/auth/login","POST",{email:"viewer@example.invalid",password:"Viewer-Test-Password"});assert.equal(viewer.status,200);
     const viewed=await request("/workspace","GET",undefined,viewer.cookie);assert.equal(viewed.status,200);
     assert.equal((await request("/setup","GET",undefined,viewer.cookie)).status,403);
     assert.equal((await request("/setup/ollama/start","POST",{},viewer.cookie)).status,403);
-    const ownerSetup=await request("/setup","GET",undefined,owner.cookie);assert.equal(ownerSetup.status,200);assert.equal(ownerSetup.body.local,false);
+    const ownerSetup=await request("/setup","GET",undefined,owner.cookie);assert.equal(ownerSetup.status,200);assert.equal(ownerSetup.body.local,true);
     assert.equal((await request("/accounts","POST",{name:"Forbidden",dailyBudget:10},viewer.cookie)).status,403);
     assert.equal((await request("/gmail/config","GET",undefined,viewer.cookie)).status,403);
     assert.equal((await request("/leads/anything/enrich","POST",{website:"https://example.com"},viewer.cookie)).status,403);
@@ -62,6 +70,31 @@ test("authenticated workspace protects API data and enforces team roles/invitati
     assert.equal((await request(`/leads/${leadId}`,"PATCH",{email:"not-permitted@example.invalid"},reviewer.cookie)).status,403);
     assert.equal((await request("/drafts/demo-draft","PUT",{text:"A revised draft for the team to review.",status:"pending",expectedRevision:1},reviewer.cookie)).status,200);
     assert.equal((await request("/drafts/demo-draft","PUT",{text:"A stale version cannot overwrite the latest.",status:"approved",expectedRevision:1},reviewer.cookie)).status,400);
+    // Public registration never grants access or accepts a self-selected role.
+    const registration = {name:"New applicant",email:"applicant@example.invalid",password:"Applicant-Test-Password",username:"applicant.name"};
+    assert.equal((await request("/auth/register","POST",{...registration,role:"owner"})).status,400);
+    assert.equal((await request("/auth/register","POST",{...registration,username:"OWNER.NAME"})).status,400);
+    assert.equal((await request("/auth/register","POST",registration)).status,201);
+    assert.equal((await request("/auth/login","POST",registration)).status,401);
+    const applicant=(await request("/workspace","GET",undefined,owner.cookie)).body.state.members.find((m:any)=>m.email===registration.email);
+    assert.equal(applicant.pendingApproval,true); assert.equal(applicant.role,"viewer");
+    assert.ok(!viewed.body.state.members.some((m:any)=>m.id===applicant.id));
+    assert.equal((await request(`/team/members/${applicant.id}`,"PATCH",{role:"viewer",status:"active"},owner.cookie)).status,200);
+    const joined=await request("/auth/login","POST",registration); assert.equal(joined.status,200);
+    assert.equal((await request("/team/messages","POST",{recipientId:ownerId,body:"Private hello from a viewer"},joined.cookie)).status,201);
+    assert.equal((await request("/team/messages","POST",{recipientId:applicant.id,body:"Welcome to the team"},owner.cookie)).status,201);
+    const applicantWorkspace=(await request("/workspace","GET",undefined,joined.cookie)).body;
+    assert.equal(applicantWorkspace.state.teamMessages.length,2);
+    assert.equal((await request("/workspace","GET",undefined,reviewer.cookie)).body.state.teamMessages.length,0);
+    assert.equal((await request("/team/messages","POST",{recipientId:ownerId,body:""},joined.cookie)).status,400);
+    assert.equal((await request("/team/messages","POST",{recipientId:"missing",body:"Hello"},joined.cookie)).status,400);
+    assert.equal((await request(`/team/members/${ownerId}`,"DELETE",undefined,joined.cookie)).status,403);
+    assert.equal((await request(`/team/members/${ownerId}`,"DELETE",undefined,owner.cookie)).status,400);
+    assert.equal((await request(`/team/members/${applicant.id}`,"DELETE",undefined,owner.cookie)).status,200);
+    assert.equal((await request("/workspace","GET",undefined,joined.cookie)).status,401);
+    assert.equal((await request("/auth/login","POST",registration)).status,401);
+    assert.equal((await request(`/team/members/${applicant.id}`,"PATCH",{role:"viewer",status:"active"},owner.cookie)).status,400);
+    assert.ok((await request("/workspace","GET",undefined,owner.cookie)).body.state.members.find((m:any)=>m.id===applicant.id).deletedAt);
     // Company preparation is an explicit admin operation; it does not grant
     // company isolation or change the existing workspace-role policy.
     assert.equal((await request("/settings/company-migration","GET",undefined,reviewer.cookie)).status,403);

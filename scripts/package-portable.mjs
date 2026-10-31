@@ -1,5 +1,5 @@
 import { build } from 'esbuild';
-import { cp, mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
+import { cp, mkdir, readFile, readdir, writeFile, unlink } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { basename, dirname, join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -26,6 +26,7 @@ for (const name of ['WORKING_NOTES.md', 'BACKEND_IMPLEMENTATION_PLAN.md', 'IMPLE
   await cp(join(root, 'docs', name), join(staging, 'docs', name));
 await cp(process.execPath, join(staging, 'runtime', 'node.exe'));
 for (const name of await readdir(join(root, 'scripts', 'portable'))) await cp(join(root, 'scripts', 'portable', name), join(staging, name));
+execFileSync('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', join(root, 'scripts', 'build-setup.ps1'), '-Destination', join(staging, 'Setup_BREKTRA.exe')], { stdio: 'inherit' });
 await cp(join(root, '.env.example'), join(staging, '.env.example'));
 const runtimeLicense = await fetch(`https://raw.githubusercontent.com/nodejs/node/${process.version}/LICENSE`, { signal: AbortSignal.timeout(20000) });
 if (!runtimeLicense.ok) throw new Error(`Could not retrieve the Node ${process.version} license.`);
@@ -51,7 +52,7 @@ for (const directory of [...packageRoots].sort()) {
   }
 }
 await writeFile(join(staging, 'THIRD-PARTY-NOTICES.txt'), notices);
-await writeFile(join(staging, 'READ ME FIRST.txt'), `BREKTRA ${version} - Windows 10/11, 64-bit\r\n\r\n1. Extract the entire ZIP. Do not run it inside the ZIP.\r\n2. Open the BREKTRA folder.\r\n3. Double-click START BREKTRA. Your browser opens automatically.\r\n4. When finished, double-click STOP BREKTRA.\r\n\r\nNo Node.js installation or terminal commands are needed.\r\nKeep the runtime and dist folders beside the launcher.\r\nKeep your computer awake while campaigns run.\r\n\r\nThis version starts with DEMO DATA. No LinkedIn requests or messages are sent.\r\nDemo changes reset when you stop and restart the app.\r\nEach computer has its own local demo. Shared live operation is not set up.\r\nGoogle Sheets and local AI need separate setup through Settings.\r\nIf you later use the same control spreadsheet on two computers, run only one app at a time.\r\n\r\nShare the original BREKTRA-Windows-x64.zip, not a folder containing your .env, credentials, or logs.\r\nBuilt with Node ${process.version}.\r\n`);
+await writeFile(join(staging, 'READ ME FIRST.txt'), `BREKTRA ${version} - Windows 10/11, 64-bit\r\n\r\n1. Extract the entire ZIP. Do not run it inside the ZIP.\r\n2. Open the BREKTRA folder.\r\n3. Double-click Setup_BREKTRA.exe for the guided first-run setup.\r\n4. Follow Next through checks, local AI, account and Google Sheets setup.\r\n5. Launch BREKTRA at the last step. Use START BREKTRA for later launches.\r\n6. When finished, double-click STOP BREKTRA.\r\n\r\nNo Node.js installation or terminal commands are needed.\r\nKeep the runtime and dist folders beside the launcher.\r\nKeep your computer awake while campaigns run.\r\n\r\nThis version starts with DEMO DATA. No LinkedIn requests or messages are sent.\r\nDemo changes reset when you stop and restart the app.\r\nPhones and other devices on your trusted LAN share this running workspace.\r\nOpen Settings > Access from other devices for the address.\r\nThe default port stays 4310. Stop older BREKTRA copies before a fresh launch.\r\nA port conflict is reported instead of silently opening a different address.\r\nTeam invitations use LAN links automatically; choose the right network if offered.\r\nReserve this PC IP in your router for a lasting LAN bookmark.\r\nRun ALLOW LAN ACCESS and approve Windows administrator access if needed.\r\nCreate the administrator on this PC, then sign in. LAN browsers must sign in.\r\nNew registrations need administrator approval in Team.\r\nTeam supports profiles and private teammate messages.\r\nRegistrations are remembered in this installation; demo messages reset on restart.\r\nUse trusted networks only.\r\nSet BREKTRA_LAN=0 in .env and restart to disable LAN sharing.\r\nSetup can install Ollama/download a model and connect Sheets.\r\nGoogle permissions and LinkedIn/Gmail approvals require your actions.\r\nDeferring Sheets leaves demo data; finish it later in Settings.\r\nIf you later use the same control spreadsheet on two computers, run only one app at a time.\r\n\r\nShare the original BREKTRA-Windows-x64.zip, not a folder containing your .env, credentials, or logs.\r\nBuilt with Node ${process.version}.\r\n`);
 await mkdir(dirname(archive), { recursive: true });
 // Archive only the fresh allowlisted staging tree, never a user's configured copy.
 execFileSync('tar.exe', ['-a', '-cf', archive, '-C', stagingParent, basename(staging)], { stdio: 'inherit' });
@@ -69,4 +70,11 @@ await cp(staging, destination, {
   recursive: true,
   filter: source => !(reuseRuntime && source === stagedRuntime),
 });
+// Keep the installed frontend aligned with the clean ZIP. Do not accumulate
+// old hashed bundles, and never touch the configured copy's private runtime.
+const currentAssets = new Set(await readdir(join(staging, 'dist', 'assets')));
+for (const name of await readdir(join(destination, 'dist', 'assets'))) {
+  if (/^index-[A-Za-z0-9_-]+\.(js|css)$/.test(name) && !currentAssets.has(name))
+    await unlink(join(destination, 'dist', 'assets', name));
+}
 console.log(`Portable folder: ${destination}\nShare this ZIP: ${archive}`);

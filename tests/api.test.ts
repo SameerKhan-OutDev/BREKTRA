@@ -15,6 +15,8 @@ test("local API supports the campaign / review workflow and rejects invalid or c
         ...process.env,
         PORT: String(port),
         STORAGE_MODE: "demo",
+        BREKTRA_AUTH: "0",
+        BREKTRA_LAN: "0",
         BREKTRA_USE_ENV: "1",
         OLLAMA_URL: "http://127.0.0.1:1",
       },

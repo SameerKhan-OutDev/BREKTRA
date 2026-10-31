@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { invitationOrigins, type InvitationNetwork } from "./network.ts";
 import { z } from "zod";
 import type { Store } from "./store.ts";
 import { Gmail, type GmailConfig } from "./gmail.ts";
@@ -6,11 +7,11 @@ import type { Secrets } from "./private-store.ts";
 import { TeamAuth, cookieValue } from "./team.ts";
 import { OutreachEngine, enroll, actionWaiting, stableMessageId, stopLead } from "./outreach.ts";
 import { enrichCompany } from "./enrichment.ts";
-import { stepSchema, roleSchema } from "./outreach-schema.ts";
+import { stepSchema, roleSchema, usernameSchema } from "./outreach-schema.ts";
 import { id, log, now } from "./domain.ts";
 import type { Sequence } from "../shared/outreach.ts";
 
-export function outreachApi(store: Store, gmail: Gmail, secrets: Secrets, engine: OutreachEngine, auth: TeamAuth) {
+export function outreachApi(store: Store, gmail: Gmail, secrets: Secrets, engine: OutreachEngine, auth: TeamAuth, network: () => InvitationNetwork = () => ({lan:false, urls:[]})) {
   const router = Router();
   const ready = () => { if (store.syncError) throw new Error("Workspace saving is unavailable. Reconnect Sheets before changing outreach."); };
   const existing = <T extends {id:string}>(items: T[], key: string): T => {
@@ -259,12 +260,35 @@ export function outreachApi(store: Store, gmail: Gmail, secrets: Secrets, engine
     });
     res.json({ ok: true });
   });
+  router.delete("/team/members/:id", async (req, res) => {
+    const actor = auth.require(req, "manage"); ready();
+    await auth.remove(String(req.params.id), actor); res.json({ ok: true });
+  });
+  router.post("/team/messages", async (req, res) => {
+    const actor = auth.require(req); ready();
+    const input = z.object({ recipientId: z.string().min(1), body: z.string().trim().min(1).max(4000) }).strict().parse(req.body);
+    await store.change(s => {
+      if (!s.members.some(m => m.id === actor.id && m.status === "active") || !s.members.some(m => m.id === input.recipientId && m.status === "active" && !m.deletedAt)) throw new Error("Choose an active teammate.");
+      if (actor.id === input.recipientId) throw new Error("Choose another teammate.");
+      s.teamMessages.push({ id: id(), senderId: actor.id, recipientId: input.recipientId, body: input.body, at: now() });
+    });
+    res.status(201).json({ ok: true });
+  });
   router.post("/team/invitations", async (req, res) => {
     const actor = auth.require(req, "manage"); ready();
     const input = z.object({ email: z.email().transform((v) => v.toLowerCase()), name: z.string().trim().min(2).max(100), role: roleSchema }).parse(req.body);
     if (input.role === "admin" && actor.role !== "owner") throw new Error("Only an owner can invite another admin.");
+    const access = network();
+    const origins = invitationOrigins(auth.hosted, gmail.origin, req.headers.host || "", access);
     const token = await auth.invite(input.email, input.name, input.role, actor.id);
-    res.status(201).json({ url: `${gmail.origin}/#join=${token}`, expiresInHours: 24 });
+    const urls = origins.map(origin => `${origin}/#join=${token}`);
+    res.status(201).json({ url: urls[0], urls, scope: auth.hosted ? "hosted" : access.lan ? "lan" : "local", expiresInHours: 24 });
+  });
+  router.patch("/team/username", async (req, res) => {
+    const actor = auth.require(req); ready();
+    const input = z.object({ username: usernameSchema, current: z.string().min(1).max(200) }).strict().parse(req.body);
+    await auth.changeUsername(actor.id, input.username, input.current);
+    res.json({ ok: true });
   });
   router.post("/team/password", async (req, res) => {
     const actor = auth.require(req);

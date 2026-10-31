@@ -1,8 +1,8 @@
 # Hosted workspace, Gmail and feature setup
 
-Current release: **0.4.0** (major 0 · update 4 · patch 0). See [version history](../CHANGELOG.md).
+Current release: **0.12.3** (major 0 · update 12 · patch 2). See [version history](../CHANGELOG.md).
 
-25 October 2026 (Asia/Karachi). The server bundle implements a single shared workspace for teammates using separate browsers. Hosting, DNS, HTTPS, Google consent and intended-recipient tests have not been provisioned automatically. The Windows portable app remains local and uses sample data by default.
+25 October 2026 (Asia/Karachi). The server bundle implements a single shared workspace for teammates using separate browsers. Hosting, DNS, HTTPS, Google consent and intended-recipient tests have not been provisioned automatically. The Windows portable app runs on the host PC, supports trusted LAN browser access, and uses sample data by default.
 
 ## What is implemented
 
@@ -79,3 +79,21 @@ For lost owner access, the server operator can stop the server, set the exact ac
 ## Validation boundaries
 
 Automated tests use mocked Gmail and Sheets plus real local HTTP sessions and local encryption. Browser checks use demo content. The clean Windows ZIP is tested from a fresh extraction. Hosted DNS/TLS deployment, Google OAuth production approval, real mailbox sending/receiving, live CRM mutation and actual hosted Ollama require the operator resources and dedicated integration test. LinkedIn login, profile verification, live invitations/messages and source CRM writeback remain unfinished original backend work; none is implied by the Gmail feature.
+
+## LinkedIn account connection (0.5.0)
+
+0.6.0 adds an optional animated setup walkthrough with Start/Skip, one task at a time, Back/Continue and pause/resume. Administrators configure the team application once; operators go directly to their own authorization when it is configured. Progress is browser-local per user/company and stores no credentials. External portal tasks are user-confirmed; completion requires a current saved account connection. See [local setup](LOCAL_SETUP.md) for source references and guide limits.
+
+Settings → LinkedIn accounts guides users through connecting their own account. An administrator creates a LinkedIn developer application, enables Sign In with LinkedIn using OpenID Connect, registers the exact callback shown in Settings, and saves the client ID/secret privately once per server. Teammates then use Connect LinkedIn and authorize on LinkedIn. A healthy persistent Sheets workspace is required; demo cannot save real connections. Connect an existing unused account label through the administrator selector to preserve campaign references. Hosted teammates use their own authenticated BREKTRA sessions and one shared HTTPS server; portable mode uses the host PC with optional trusted LAN browser access.
+
+BREKTRA requests only openid/profile for account identity. It does not request posting or email permissions. Tokens stay encrypted on the server; users never paste cookies or LinkedIn passwords into BREKTRA. Expired/revoked connections need a new authorization; automatic refresh is not assumed. Read-only checks run approximately every 15 minutes while the app runs. Reconnect/disconnect/check controls apply to the owner; failed checks and disconnect pause campaigns. Disconnect removes the locally stored token; users can additionally revoke BREKTRA through LinkedIn permitted services.
+
+Account connected does not mean outreach enabled. Invitations, messages and reply sync require separate approved access and remain disabled. Approved drafts can be copied and their lead profile opened for manual sending after current owner/approval/opt-out/reply checks; this does not record delivery or advance a sequence. Actual LinkedIn app/consent/callback testing remains unverified, including whether LinkedIn accepts the portable loopback callback. A registered HTTPS hosted origin may be needed; do not assume sign-in alone permits sending.
+
+## Access from phones and other LAN devices (0.8.0)
+
+Start BREKTRA on one PC. Portable startup enables BREKTRA_LAN=1 unless .env or the process environment sets it to 0. Open Settings → Access from other devices and use the WiFi/Ethernet IPv4 URL on devices connected to the same network. Keep the PC awake. All devices use this one workspace and runner; do not start another copy against the same Sheet.
+
+Run ALLOW LAN ACCESS on the host PC and approve the Windows administrator prompt to permit BREKTRA through Windows Firewall. The rule permits only the bundled executable, the current app port and ten fallback ports, and LocalSubnet peers. It supports Public WiFi profiles without changing the profile or disabling the firewall. Guest WiFi/AP isolation may still prevent device-to-device connections. Addresses can change after reconnecting WiFi.
+
+LAN mode uses HTTP and now requires a separate login for every browser. Create the initial administrator on the host PC; subsequent registrations need admin approval in Team. Roles apply to UI actions and API permissions. Team provides basic profiles and private member messages. Local registrations and access settings survive restart in encrypted authentication storage; demo messages reset. Sheets stores the lasting workspace team. Keep `.runtime` when upgrading this installation. Only use it on networks whose users you trust. Server credential/AI setup is restricted to the host PC browser. LinkedIn/Google callbacks remain loopback URLs; authorize accounts on the host PC. Use the authenticated HTTPS deployment for individual user accounts or access outside the LAN. Set BREKTRA_LAN=0 in .env and restart for PC-only access. The source/server entry point remains loopback by default unless explicitly enabled.

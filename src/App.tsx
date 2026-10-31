@@ -29,6 +29,7 @@ import {
   ListChecks,
   Loader2,
   Menu,
+  Monitor as MonitorIcon,
   MessageSquare,
   MoreHorizontal,
   Pause,
@@ -63,6 +64,12 @@ import type { AuthStatus } from "../shared/outreach";
 import { Inbox, LeadDetails, OutreachReview, SequenceDialog, SettingsExtensions } from "./Outreach";
 import { CompanyFoundation } from "./CompanyFoundation";
 import { WorkspaceSetup } from "./WorkspaceSetup";
+import { LinkedInSettings } from "./LinkedInSettings";
+import { LinkedInHandoff } from "./LinkedInHandoff";
+import { AppearanceProvider, Personalization } from "./Personalization";
+import { Team } from "./Team";
+import { NetworkAccess } from "./NetworkAccess";
+import { initials } from "./identity";
 
 type Page =
   | "Dashboard"
@@ -71,6 +78,7 @@ type Page =
   | "Review queue"
   | "Inbox"
   | "Activity"
+  | "Team"
   | "Settings";
 const nav: { name: Page; icon: typeof LayoutDashboard }[] = [
   { name: "Dashboard", icon: LayoutDashboard },
@@ -79,6 +87,7 @@ const nav: { name: Page; icon: typeof LayoutDashboard }[] = [
   { name: "Review queue", icon: ListChecks },
   { name: "Inbox", icon: MessageSquare },
   { name: "Activity", icon: ActivityIcon },
+  { name: "Team", icon: Users },
   { name: "Settings", icon: Settings2 },
 ];
 const modeLabel: Record<Mode, string> = {
@@ -238,11 +247,12 @@ function Modal({
 }
 
 export default function App() {
-  return <AccessGate>{(auth) => <WorkspaceApp auth={auth}/>}</AccessGate>;
+  return <AppearanceProvider><AccessGate>{(auth) => <WorkspaceApp auth={auth}/>}</AccessGate></AppearanceProvider>;
 }
 function WorkspaceApp({auth}:{auth:AuthStatus}) {
   const operate = usePermission("operate");
   const manage = usePermission("manage");
+  const review = usePermission("review");
   const [reviewChannel, setReviewChannel] = useState("linkedin");
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [page, setPage] = useState<Page>(location.hash === "#settings" ? "Settings" : "Dashboard");
@@ -329,6 +339,15 @@ function WorkspaceApp({auth}:{auth:AuthStatus}) {
     );
   const { state: s, health: h } = workspace;
   const pending = s.drafts.filter((d) => d.status === "pending").length + s.outreachActions.filter((a) => a.status === "pending").length;
+  const companyName = s.companies[0]?.name?.trim();
+  const workspaceName = companyName || (h.mode === "demo" ? "Demo workspace" : "Set up your workspace");
+  const profileName = auth.required ? auth.user?.name || "Workspace member" : "Local session";
+  const profileRole = auth.user?.role || "owner";
+  const profileUsername = workspace.auth?.user?.username;
+  const profileMark = auth.required ? initials(profileName) : null;
+  const unread = s.conversations.filter((conversation) => conversation.unread).length;
+  const connectedIdentities = s.accounts.filter((account) => account.linkedin?.status === "connected" && Date.parse(account.linkedin.expiresAt) > Date.now()).length;
+  const modelReady = h.ollama.connected && h.ollama.models.includes(h.ollama.model);
   const goCampaign = (campaign: Campaign) => {
     setEditing(campaign);
     setModal("campaign");
@@ -370,17 +389,17 @@ function WorkspaceApp({auth}:{auth:AuthStatus}) {
             BREKTRA<span className="brand-dot">.</span>
           </span>
         </a>
-        <div className="workspace-switch">
-          <span className="workspace-avatar">B</span>
+        <button className="workspace-switch" onClick={() => navigate("Settings")} title="Open workspace settings">
+          <span className="workspace-avatar" aria-hidden="true">{companyName ? initials(companyName) : <Layers3 size={19}/>}</span>
           <div>
-            <strong title={s.companies[0]?.name || "My workspace"}>{s.companies[0]?.name || "My workspace"}</strong>
-            <span>{h.hosted ? "Shared team workspace" : "Personal workspace"} · v{APP_VERSION}</span>
+            <strong title={workspaceName}>{workspaceName}</strong>
+            <span>{h.hosted ? "Shared team workspace" : "On this computer"}</span>
           </div>
           <Badge tone="neutral">{h.hosted ? "TEAM" : "LOCAL"}</Badge>
-        </div>
+        </button>
         <div className="nav-label">WORKSPACE</div>
         <nav aria-label="Main navigation">
-          {nav.map(({ name, icon: Icon }) => (
+          {nav.filter(n => n.name !== "Review queue" || review).map(({ name, icon: Icon }) => (
             <button
               key={name}
               className={`nav-item ${page === name ? "active" : ""}`}
@@ -389,25 +408,28 @@ function WorkspaceApp({auth}:{auth:AuthStatus}) {
             >
               <Icon size={19} strokeWidth={1.8} />
               <span>{name}</span>
+              {name === "Campaigns" && s.campaigns.length > 0 && <span className="nav-count">{s.campaigns.length}</span>}
               {name === "Review queue" && pending > 0 && (
                 <span className="nav-count">{pending}</span>
               )}
-              {name === "Inbox" && s.conversations.some((c) => c.unread) && <span className="nav-count">{s.conversations.filter((c) => c.unread).length}</span>}
+              {name === "Inbox" && unread > 0 && <span className="nav-count">{unread}</span>}
             </button>
           ))}
         </nav>
         <div className="sidebar-bottom">
-          <div className="local-card">
+          <div className="local-card" aria-label="Workspace health">
             <div className="local-card-heading">
               <span className={`status-dot ${offline ? "red" : ""}`} />
               <strong>
-                {offline ? "Server disconnected" : h.hosted ? "Shared workspace server" : "Running on your machine"}
+                {offline ? "Server disconnected" : "Workspace health"}
               </strong>
             </div>
-            <p>Your workspace, your control.</p>
-            <span>
-              <ShieldCheck size={13} /> {h.hosted ? "One coordinated runner" : "Sessions stay local"}
-            </span>
+            <dl className="workspace-health">
+              <div><dt>Sheets CRM</dt><dd>{offline ? "Unavailable" : h.mode === "demo" ? "Demo data" : h.sheets.connected ? "Connected" : "Disconnected"}</dd></div>
+              <div><dt>Local AI</dt><dd title={offline ? "Server disconnected" : h.ollama.detail}>{offline ? "Unavailable" : modelReady ? "Model ready" : h.ollama.connected ? "Choose model" : "Not detected"}</dd></div>
+              <div><dt>LinkedIn</dt><dd title="Account identity connection does not enable live LinkedIn requests or messages.">{offline ? "Unavailable" : connectedIdentities ? `${connectedIdentities} identity only` : "Not connected"}</dd></div>
+            </dl>
+            <button className="health-settings" onClick={() => navigate("Settings")}>Manage connections <ArrowRight size={13}/></button>
           </div>
           <button
             className="nav-item help-link"
@@ -418,10 +440,10 @@ function WorkspaceApp({auth}:{auth:AuthStatus}) {
             <ArrowUpRight size={15} />
           </button>
           <div className="sidebar-profile">
-            <div className="avatar navy">B</div>
+            <div className="avatar navy" aria-hidden="true">{profileMark || <MonitorIcon/>}</div>
             <div>
-              <strong>{auth.user?.name || "BREKTRA workspace"}</strong>
-              <span>{auth.user?.role || "owner"}{h.hosted ? " · Hosted" : " · Local"}</span>
+              <strong title={profileName}>{profileName}</strong>
+              <span>{profileUsername ? `@${profileUsername} · ` : ""}{profileRole} · v{APP_VERSION}</span>
             </div>
           </div>
         </div>
@@ -436,14 +458,15 @@ function WorkspaceApp({auth}:{auth:AuthStatus}) {
             >
               <Menu size={21} />
             </button>
-            <span>Workspace</span>
+            <span className="breadcrumb-workspace" title={workspaceName}>{companyName || (h.mode === "demo" ? "Demo workspace" : "Workspace")}</span>
             <ChevronRight size={14} />
             <strong>{page}</strong>
           </div>
           <div className="topbar-right">
             <span className="local-pill">
-              <span className="status-dot" /> {h.hosted ? "Team workspace" : "Local workspace"}
+              <span className={`status-dot ${offline ? "red" : ""}`} /> {offline ? "Server disconnected" : h.hosted ? "Team server online" : "Local server online"}
             </span>
+            {review && <><button className="topbar-review" onClick={() => navigate("Review queue")}><ListChecks size={16}/><span>{pending ? `${pending} to review` : "Review queue"}</span></button>
             <button
               className="icon-button notification-button"
               aria-label={`${pending} drafts awaiting review`}
@@ -452,7 +475,10 @@ function WorkspaceApp({auth}:{auth:AuthStatus}) {
               <Bell size={19} />
               {pending > 0 && <span />}
             </button>
-            <div className="avatar navy small">B</div>
+            </>}<button className="topbar-profile" onClick={() => navigate("Settings")} aria-label={`${profileName}, ${profileRole}. Open settings`}>
+              <span className="avatar navy small" aria-hidden="true">{profileMark || <MonitorIcon/>}</span>
+              <span className="topbar-profile-label"><strong>{profileName}</strong><small>{profileRole}</small></span><ChevronDown size={13}/>
+            </button>
           </div>
         </header>
         <main className="main-content">
@@ -514,6 +540,7 @@ function WorkspaceApp({auth}:{auth:AuthStatus}) {
                       "A clear record of what happened, and what needs attention.",
                     Settings: "Connections, privacy, and workspace access.",
                     Inbox: "Read, assign, and review replies in one place.",
+                    Team: "Your teammates, profiles and private conversations.",
                   }[page]
                 }
               </p>
@@ -530,7 +557,7 @@ function WorkspaceApp({auth}:{auth:AuthStatus}) {
                 <Plus size={17} /> Import from Sheets
               </button>
             ) : page === "Settings" ? (
-              <button
+              <button hidden={!manage}
                 className="button"
                 disabled={busy || !manage}
                 onClick={() =>
@@ -611,7 +638,7 @@ function WorkspaceApp({auth}:{auth:AuthStatus}) {
               importLeads={() => setModal("import")}
             />
           )}
-          {page === "Review queue" && <>
+          {page === "Review queue" && review && <>
             <div className="review-channel-tabs tabs"><button className={reviewChannel === "linkedin" ? "selected" : ""} onClick={() => setReviewChannel("linkedin")}>LinkedIn drafts <span>{s.drafts.filter((d) => d.status === "pending").length}</span></button><button className={reviewChannel === "outreach" ? "selected" : ""} onClick={() => setReviewChannel("outreach")}>Sequence & email <span>{s.outreachActions.filter((a) => a.status === "pending").length}</span></button></div>
             {reviewChannel === "outreach" ? <OutreachReview s={s} busy={busy} action={action}/> : <Review
               s={s}
@@ -621,6 +648,7 @@ function WorkspaceApp({auth}:{auth:AuthStatus}) {
             />}
           </>}
           {page === "Inbox" && <Inbox s={s} action={action} busy={busy} review={() => {setReviewChannel("outreach");navigate("Review queue");}}/>}
+          {page === "Team" && <Team workspace={workspace} action={action} busy={busy}/>}
           {page === "Activity" && <ActivityPage s={s} />}
           {page === "Settings" && (
             <Settings
@@ -745,6 +773,7 @@ function Dashboard({
   navigate: (p: Page) => void;
   edit: (c: Campaign) => void;
 }) {
+  const review = usePermission("review");
   const requests = events.filter((a) => a.kind === "request").length;
   const pitches = events.filter((a) => a.kind === "pitch").length;
   const drafts = events.filter((a) => a.kind === "draft").length;
@@ -1039,9 +1068,9 @@ function Dashboard({
               : "Every generated pitch is held for review before it moves forward."}
           </span>
         </div>
-        <button className="button" onClick={() => navigate("Review queue")}>
+        {review && <button className="button" onClick={() => navigate("Review queue")}>
           Open review queue <ArrowRight size={15} />
-        </button>
+        </button>}
       </div>
     </>
   );
@@ -1155,7 +1184,7 @@ function Campaigns({
                     View / edit
                   </button>
                   <button className="button" onClick={() => setSequenceCampaign(c)}><ListChecks size={14}/>Sequence{s.sequences.some((q) => q.campaignId === c.id && q.enabled) ? " · on" : ""}</button>
-                  <button
+                  <button hidden={!operate}
                     className={`button ${c.status === "running" ? "" : "primary"}`}
                     disabled={busy || !operate}
                     onClick={() =>
@@ -1350,7 +1379,7 @@ function Leads({
                     <div className="row-actions">
                       <button className="icon-button" title={`Contact details and evidence for ${l.name}`} aria-label={`Contact details and evidence for ${l.name}`} onClick={() => setDetailId(l.id)}><Search size={16}/></button>
                       {!l.optedOut && l.relationship === "connected" && (
-                        <button
+                        <button hidden={!operate}
                           className="icon-button"
                           title={`Prepare a draft for ${l.name}`}
                           aria-label={`Prepare a draft for ${l.name}`}
@@ -1389,7 +1418,7 @@ function Leads({
                           <Sparkles size={16} />
                         </button>
                       )}
-                      <button
+                      <button hidden={!operate}
                         className={`text-button ${l.optedOut ? "" : "danger-text"}`}
                         disabled={busy || !operate}
                         onClick={() =>
@@ -1611,9 +1640,10 @@ function Review({
                 </span>
               </div>
             </div>
+            {!demo && <LinkedInHandoff kind="draft" recordId={draft.id} revision={draft.revision || 1} enabled={draft.status === "approved" && lead.outreachApproval === "approved" && !lead.optedOut && !lead.repliedAt} action={action} busy={busy}/>}
             {draft.status === "pending" ? (
               <div className="draft-actions">
-                <button
+                <button hidden={!review}
                   className="button danger-text"
                   disabled={busy || !review || (draft.revision || 1) !== baseRevision}
                   onClick={() => void save("rejected")}
@@ -1622,14 +1652,14 @@ function Review({
                   Reject
                 </button>
                 <div>
-                  <button
+                  <button hidden={!review}
                     className="button"
                     disabled={busy || !review || text.trim().length < 10 || (draft.revision || 1) !== baseRevision}
                     onClick={() => void save("pending")}
                   >
                     Save changes
                   </button>
-                  <button
+                  <button hidden={!review}
                     className="button primary"
                     disabled={
                       busy || !review || (draft.revision || 1) !== baseRevision ||
@@ -1826,10 +1856,13 @@ function Settings({
   const manage = usePermission("manage");
   return (
     <>
-      <WorkspaceSetup workspace={{state:s,health:h,auth:workspaceAuth}} action={action} busy={busy}/>
-      <SettingsExtensions workspace={{state:s,health:h,auth:workspaceAuth}} action={action} busy={busy}/>
-      <CompanyFoundation workspace={{state:s,health:h,auth:workspaceAuth}} action={action} busy={busy}/>
-      <div className="settings-grid">
+      <Personalization/>
+      {manage && <NetworkAccess/>}
+      {manage && <WorkspaceSetup workspace={{state:s,health:h,auth:workspaceAuth}} action={action} busy={busy}/>}
+      <LinkedInSettings workspace={{state:s,health:h,auth:workspaceAuth}} action={action} busy={busy}/>
+      {manage && <SettingsExtensions workspace={{state:s,health:h,auth:workspaceAuth}} action={action} busy={busy}/>}
+      {manage && <CompanyFoundation workspace={{state:s,health:h,auth:workspaceAuth}} action={action} busy={busy}/>}
+      {manage && <><div className="settings-grid">
         <section className="panel integration-card">
           <div className="integration-top">
             <span className="integration-icon green">
@@ -1842,7 +1875,7 @@ function Settings({
           <h2>Google Sheets</h2>
           <p>Your CRM and the source of truth for workspace data.</p>
           <div className="integration-detail">{h.sheets.detail}</div>
-          <button
+          <button hidden={!manage}
             className="button"
             disabled={busy || !manage || h.mode === "demo"}
             onClick={() =>
@@ -1871,7 +1904,7 @@ function Settings({
             {h.ollama.detail}
             <span className="model-label">Model: {h.ollama.model}</span>
           </div>
-          <button
+          <button hidden={!manage}
             className="button"
             disabled={busy || !manage}
             onClick={() =>
@@ -1890,10 +1923,10 @@ function Settings({
             <span className="integration-icon blue">
               <span className="linkedin-mark">in</span>
             </span>
-            <Badge tone="orange">Next milestone</Badge>
+            <Badge tone="neutral">Account connection</Badge>
           </div>
           <h2>LinkedIn</h2>
-          <p>Account sessions and verified browser actions.</p>
+          <p>Connect accounts using the LinkedIn accounts panel above.</p>
           <div className="integration-detail">{h.linkedin.detail}</div>
           <div className="integration-footnote">
             <ShieldCheck size={15} />
@@ -1909,7 +1942,7 @@ function Settings({
               <h2>Future AI examples</h2>
               <p>Save generation inputs, original drafts and future edits/review decisions in the control spreadsheet. No training or upload runs automatically. Earlier drafts have no reconstructed history. Demo examples stay labeled.</p>
             </div>
-            <button className="button" disabled={busy || !manage} aria-pressed={s.settings[0].trainingCollection}
+            <button hidden={!manage} className="button" disabled={busy || !manage} aria-pressed={s.settings[0].trainingCollection}
               onClick={() => void action(() => api("/settings/training", "PATCH", { enabled: !s.settings[0].trainingCollection }), "Example collection preference saved.")}>
               {s.settings[0].trainingCollection ? "Turn collection off" : "Enable collection"}
             </button>
@@ -1930,7 +1963,7 @@ function Settings({
               <h2>Accounts</h2>
               <p>Independent relationships. Shared budgets.</p>
             </div>
-            <button
+            <button hidden={!manage}
               className="icon-button"
               aria-label="Register account"
               disabled={busy || !manage}
@@ -1947,7 +1980,7 @@ function Settings({
                   <strong>{a.name}</strong>
                   <span>{a.dailyBudget} outbound actions/day</span>
                   <Badge tone={a.status === "demo" ? "neutral" : "orange"}>
-                    {a.status === "demo"
+                    {a.linkedin ? (a.linkedin.status === "connected" && Date.parse(a.linkedin.expiresAt) > Date.now() ? "Identity connected · outreach unavailable" : "Reconnect in LinkedIn accounts") : a.status === "demo"
                       ? "Demo account"
                       : "Session not connected"}
                   </Badge>
@@ -1958,17 +1991,18 @@ function Settings({
             <Empty
               icon={Users}
               title="Add your first account"
-              detail="Register a name to organize leads and drafts. Browser connection comes later."
+              detail="Use Connect LinkedIn above. Your account name is filled in automatically."
             />
           )}
           <div className="account-panel-footer">
-            <button className="button" disabled={busy || !manage} onClick={addAccount}>
+            <button hidden={!manage} className="button" disabled={busy || !manage} onClick={addAccount}>
               <Plus size={16} />
               Register account
             </button>
           </div>
         </section>
       </div>
+    </>}
     </>
   );
 }

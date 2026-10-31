@@ -1,5 +1,7 @@
 import { z } from "zod";
 import { ownership } from "./company-schema.ts";
+import { usernamePattern, usernameHelp } from "../shared/username.ts";
+export const usernameSchema = z.string().trim().toLowerCase().regex(usernamePattern, usernameHelp);
 const key = z.string().min(1), at = z.iso.datetime(), text = z.string();
 export const roleSchema = z.enum(["owner", "admin", "operator", "reviewer", "viewer"]);
 export const stepSchema = z.object({ id: key, kind: z.enum(["email", "linkedin_request", "linkedin_message"]),
@@ -34,7 +36,8 @@ export const outreachShape = {
   enrichments: z.array(z.object({ ...ownership, id: key, leadId: key, sourceUrl: z.url(), checkedAt: at,
     title: text.max(500), summary: text.max(3000), listedEmails: z.array(z.email()).max(20),
     emailDomainStatus: z.enum(["has_mx", "no_mx", "not_checked"]), status: z.enum(["pending", "accepted", "rejected"]) })),
-  members: z.array(z.object({ id: key, name: key, email: z.email(), role: roleSchema,
-    status: z.enum(["active", "invited", "disabled"]), createdAt: at })),
+  members: z.array(z.object({ id: key, name: key, email: z.email(), username: usernameSchema.optional(), role: roleSchema,
+    status: z.enum(["active", "invited", "disabled"]), createdAt: at, pendingApproval: z.boolean().optional(), deletedAt: at.optional() })),
+  teamMessages: z.array(z.object({ id: key, senderId: key, recipientId: key, body: text.min(1).max(4000), at })),
   invitations: z.array(z.object({ ...ownership, id: key, memberId: key, expiresAt: at, acceptedAt: at.optional() })),
 };

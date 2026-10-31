@@ -14,6 +14,7 @@ export interface Account extends CompanyOwned {
   initials: string;
   dailyBudget: number;
   status: "demo" | "not_connected";
+  linkedin?: { ownerId: string; subject: string; connectionId: string; status: "connected" | "needs_login" | "disconnected"; connectedAt: string; checkedAt: string; expiresAt: string };
 }
 export interface Source extends CompanyOwned {
   id: string;
@@ -163,6 +164,7 @@ export interface State {
   enrichments: Enrichment[];
   members: Member[];
   invitations: Invitation[];
+  teamMessages: import("./outreach").TeamMessage[];
 }
 export interface Health {
   mode: "demo" | "sheets";

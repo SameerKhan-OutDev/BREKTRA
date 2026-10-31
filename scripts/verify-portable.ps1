@@ -3,7 +3,7 @@ $ErrorActionPreference = 'Stop'
 $env:STORAGE_MODE = 'demo'
 $env:BREKTRA_USE_ENV = '0'
 $env:BREKTRA_HOSTED = '0'
-$env:BREKTRA_AUTH = '0'
+$env:BREKTRA_AUTH = '1'
 $env:OLLAMA_URL = 'http://127.0.0.1:1'
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $archivePath = (Resolve-Path -LiteralPath $Archive).Path
@@ -12,7 +12,8 @@ $zip = [IO.Compression.ZipFile]::OpenRead($archivePath)
 try {
   $files = @($zip.Entries | Where-Object { !$_.FullName.EndsWith('/') })
   $exact = @('server.mjs', 'VERSION.txt', 'README.md', 'ABOUT_BREKTRA.md', 'CHANGELOG.md', '.env.example', 'READ ME FIRST.txt', 'THIRD-PARTY-NOTICES.txt',
-    'START BREKTRA.cmd', 'STOP BREKTRA.cmd', 'Run-Brektra.ps1', 'Stop-Brektra.ps1',
+    'START BREKTRA.cmd', 'STOP BREKTRA.cmd', 'Run-Brektra.ps1', 'Stop-Brektra.ps1', 'ALLOW LAN ACCESS.cmd', 'Allow-Lan.ps1',
+    'Setup_BREKTRA.exe', 'Setup-Brektra.ps1', 'Setup-Tasks.ps1', 'Setup.xaml',
     'runtime/node.exe', 'runtime/LICENSE.txt', 'dist/index.html', 'docs/WORKING_NOTES.md',
     'docs/BACKEND_IMPLEMENTATION_PLAN.md', 'docs/IMPLEMENTATION_STATUS.md', 'docs/PERSISTENCE.md',
     'docs/OUTREACH_EXPANSION_PLAN.md', 'docs/HOSTED_SETUP.md', 'docs/UPDATE_0.3.0_IMPLEMENTATION_PLAN.md', 'docs/COMPANY_MIGRATION.md', 'docs/LOCAL_SETUP.md')
@@ -43,6 +44,7 @@ try {
   if ($LASTEXITCODE -ne 0) { throw 'Packaged startup failed.' }
   $started = $true
   $instance = Get-Content -LiteralPath (Join-Path $appRoot '.runtime\instance.json') -Raw | ConvertFrom-Json
+  if ($instance.port -ne 4310) { throw 'Fresh portable launch changed the fixed default port.' }
   $url = "http://127.0.0.1:$($instance.port)"
   $health = Invoke-RestMethod "$url/api/health"
   if ($health.app -ne 'BREKTRA' -or $health.pid -ne $instance.processId -or $health.workspaceId -ne $instance.workspaceId) { throw 'Packaged identity mismatch.' }
@@ -51,10 +53,64 @@ try {
   foreach ($name in @('README.md', 'ABOUT_BREKTRA.md', 'CHANGELOG.md')) {
     if ((Get-FileHash -LiteralPath (Join-Path $appRoot $name)).Hash -ne (Get-FileHash -LiteralPath (Join-Path $root $name)).Hash) { throw "Packaged document differs: $name" }
   }
+  $statusCode = 0
+  try { $null = Invoke-WebRequest "$url/api/workspace" -UseBasicParsing } catch { $statusCode = [int]$_.Exception.Response.StatusCode }
+  if ($statusCode -ne 401) { throw 'Fresh workspace does not require sign-in.' }
+  $status = Invoke-RestMethod "$url/api/auth/status"
+  if (!$status.setupRequired -or !$status.canSetup) { throw 'Host administrator registration unavailable.' }
+  $session = New-Object Microsoft.PowerShell.Commands.WebRequestSession
+  $PSDefaultParameterValues['Invoke-RestMethod:WebSession'] = $session
+  $PSDefaultParameterValues['Invoke-WebRequest:WebSession'] = $session
+  $registration = @{ name = 'Portable test owner'; email = 'portable@example.invalid'; username = 'portable.owner'; password = 'Portable-Test-Password' } | ConvertTo-Json
+  $login = @{ identifier = 'PORTABLE.OWNER'; password = 'Portable-Test-Password' } | ConvertTo-Json
+  $null = Invoke-RestMethod "$url/api/auth/register" -Method Post -ContentType 'application/json' -Body $registration
+  $null = Invoke-RestMethod "$url/api/auth/login" -Method Post -ContentType 'application/json' -Body $login
   $workspace = Invoke-RestMethod "$url/api/workspace"
+  $network = Invoke-RestMethod "$url/api/network"
+  if (!$network.lan) { throw 'Portable LAN access is not enabled.' }
+  if ($network.urls.Count -gt 0) {
+    $invitationBody = @{name='Portable guest'; email='guest@example.invalid'; role='viewer'} | ConvertTo-Json
+    $invitation = Invoke-RestMethod "$url/api/team/invitations" -Method Post -ContentType 'application/json' -Body $invitationBody
+    $invitationUri = [Uri]$invitation.url
+    $invitationOrigin = $invitationUri.GetLeftPart([UriPartial]::Authority)
+    if ($invitation.scope -ne 'lan' -or $invitationOrigin -notin $network.urls) { throw 'Host-created invitation did not use a LAN address.' }
+    foreach ($link in $invitation.urls) {
+      if (([Uri]$link).GetLeftPart([UriPartial]::Authority) -notin $network.urls) { throw 'Invitation has an unapproved address.' }
+    }
+    $guest = New-Object Microsoft.PowerShell.Commands.WebRequestSession
+    $accept = @{token=$invitationUri.Fragment.Substring(6); username='portable.guest'; password='Portable-Guest-Password'} | ConvertTo-Json
+    $null = Invoke-RestMethod "$invitationOrigin/api/auth/accept" -Method Post -ContentType 'application/json' -Body $accept -WebSession $guest
+    $guestLogin = @{identifier='portable.guest'; password='Portable-Guest-Password'} | ConvertTo-Json
+    $null = Invoke-RestMethod "$invitationOrigin/api/auth/login" -Method Post -ContentType 'application/json' -Body $guestLogin -WebSession $guest
+    if ((Invoke-RestMethod "$invitationOrigin/api/workspace" -WebSession $guest).auth.user.username -ne 'portable.guest') { throw 'LAN invitation acceptance/sign-in failed.' }
+  }
+  foreach ($address in $network.urls) {
+    $null = $session.Headers.Remove('Origin')
+    $lanHealth = Invoke-RestMethod "$address/api/health" -TimeoutSec 5
+    if ($lanHealth.pid -ne $health.pid) { throw 'LAN did not reach the same server.' }
+    $statusCode = 0
+    try { $null = Invoke-WebRequest "$address/api/workspace" -UseBasicParsing } catch { $statusCode = [int]$_.Exception.Response.StatusCode }
+    if ($statusCode -ne 401) { throw 'LAN visitor bypassed sign-in.' }
+    $null = Invoke-RestMethod "$address/api/auth/login" -Method Post -ContentType 'application/json' -Body $login
+    $lanWorkspace = Invoke-RestMethod "$address/api/workspace" -TimeoutSec 5
+    if ($lanWorkspace.health.mode -ne 'demo') { throw 'LAN workspace unavailable.' }
+    $null = Invoke-WebRequest $address -UseBasicParsing -TimeoutSec 5
+    foreach ($path in @('/api/setup', '/api/setup/ollama/start')) {
+      $statusCode = 0
+      try { $null = Invoke-WebRequest ($address + $path) -Method $(if ($path.EndsWith('/start')) { 'POST' } else { 'GET' }) -UseBasicParsing }
+      catch { $statusCode = [int]$_.Exception.Response.StatusCode }
+      if ($statusCode -ne 403) { throw "LAN server setup was not protected: $path" }
+    }
+    $statusCode = 0
+    try { $null = Invoke-WebRequest "$address/api/settings/training" -Method Patch -ContentType 'application/json' -Body '{"enabled":false}' -Headers @{ Origin = 'http://attacker.example' } -UseBasicParsing }
+    catch { $statusCode = [int]$_.Exception.Response.StatusCode }
+    if ($statusCode -ne 403) { throw 'LAN cross-origin mutation was not blocked.' }
+    $null = Invoke-RestMethod "$address/api/settings/training" -Method Patch -ContentType 'application/json' -Body '{"enabled":false}' -Headers @{ Origin = $address }
+  }
+  $null = $session.Headers.Remove('Origin')
   if ($workspace.health.mode -ne 'demo' -or $workspace.state.accounts.Count -ne 1 -or $workspace.state.settings[0].trainingCollection) { throw 'Fresh package did not start with clean demo state.' }
   if ($workspace.state.trainingExamples.Count -ne 0 -or $workspace.state.trainingFeedback.Count -ne 0) { throw 'Package contains captured personal state.' }
-  if ($workspace.auth.required -or $workspace.state.members.Count -ne 0 -or $workspace.state.outreachActions.Count -ne 0) { throw 'Package contains configured team/outreach state.' }
+  if (!$workspace.auth.required -or $workspace.state.members.Count -ne 1 -or $workspace.state.outreachActions.Count -ne 0) { throw 'Package contains unexpected team/outreach state.' }
   if ($workspace.state.mailboxes[0].provider -ne 'demo' -or $workspace.state.mailboxes[0].sendingEnabled) { throw 'Fresh package has a real or enabled sending mailbox.' }
   if ($workspace.state.companies.Count -ne 0 -or $workspace.state.companyMigrations.Count -ne 0 -or $workspace.state.companyMemberships.Count -ne 0) { throw 'Fresh package contains configured company data.' }
   $setup = Invoke-RestMethod "$url/api/setup"
@@ -85,6 +141,22 @@ try {
   if (@($prepared.state.mailboxes | Where-Object { $_.sendingEnabled }).Count -ne 0) { throw 'Preparation failed to pause mailbox sending.' }
   & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $run -NoBrowser
   if ($LASTEXITCODE -ne 0 -or (Invoke-RestMethod "$url/api/health").pid -ne $health.pid) { throw 'Repeated launch did not reuse the process.' }
+  $secondRoot = Join-Path $verificationRoot 'second-installation'
+  New-Item -ItemType Directory -Path (Join-Path $secondRoot 'runtime') -Force | Out-Null
+  foreach ($name in @('Run-Brektra.ps1','Stop-Brektra.ps1','server.mjs')) { Copy-Item -LiteralPath (Join-Path $appRoot $name) -Destination (Join-Path $secondRoot $name) }
+  Copy-Item -LiteralPath (Join-Path $appRoot 'runtime\node.exe') -Destination (Join-Path $secondRoot 'runtime\node.exe')
+  try {
+    $conflict = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $secondRoot 'Run-Brektra.ps1') -NoBrowser
+    if ($LASTEXITCODE -eq 0 -or ($conflict -join ' ') -notmatch 'Another BREKTRA installation') { throw 'Second installation did not reject the occupied fixed port.' }
+    if ((Invoke-RestMethod "$url/api/health").pid -ne $health.pid) { throw 'Conflict disturbed the original server.' }
+    $listener = New-Object System.Net.Sockets.TcpListener([Net.IPAddress]::Loopback, 0)
+    $listener.Start()
+    try {
+      "PORT=$($listener.LocalEndpoint.Port)" | Set-Content -LiteralPath (Join-Path $secondRoot '.env')
+      $conflict = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $secondRoot 'Run-Brektra.ps1') -NoBrowser
+      if ($LASTEXITCODE -eq 0 -or ($conflict -join ' ') -notmatch 'another application') { throw 'Occupied non-BREKTRA port was not rejected.' }
+    } finally { $listener.Stop() }
+  } finally { & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $secondRoot 'Stop-Brektra.ps1') }
   & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $stop
   if ($LASTEXITCODE -ne 0) { throw 'Packaged shutdown failed.' }
   $started = $false
@@ -93,10 +165,15 @@ try {
   try { $null = Invoke-RestMethod "$url/api/health" -TimeoutSec 1; $stillRunning = $true } catch {}
   if ($stillRunning) { throw 'Packaged server remained after stop.' }
   # A forced launcher stop must also release the new OS ownership lock.
+  $env:BREKTRA_LAN = '0'
   & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $run -NoBrowser
   if ($LASTEXITCODE -ne 0) { throw 'Packaged restart could not reacquire ownership.' }
   $started = $true
+  $status = Invoke-RestMethod "$url/api/auth/status"
+  if ($status.authenticated -or $status.setupRequired) { throw 'Restart did not preserve registration and revoke sessions.' }
+  $null = Invoke-RestMethod "$url/api/auth/login" -Method Post -ContentType 'application/json' -Body $login
   $restarted = Invoke-RestMethod "$url/api/workspace"
+  if ((Invoke-RestMethod "$url/api/network").lan) { throw 'PC-only opt-out did not disable LAN sharing.' }
   if ($restarted.state.companies.Count -ne 0) { throw 'Demo preparation did not reset after restart.' }
   & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $stop
   if ($LASTEXITCODE -ne 0) { throw 'Final packaged stop failed.' }
@@ -106,7 +183,7 @@ try {
     sha256 = (Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash
     extraction = $appRoot
     allowlistedFiles = $fileCount
-    checks = 'startup, release version, health identity, clean workspace, frontend/assets, document hashes, bundled company preview/apply, repeat-start reuse, shutdown, ownership reacquisition, demo reset, private-file allowlist'
+    checks = 'fixed port startup, occupied BREKTRA/unrelated port refusal, release version, health identity, clean workspace, frontend/assets, LAN health/workspace/frontend, host-created LAN invitation and acceptance when an interface exists, LAN setup protection, cross-origin blocking, same-origin mutations, PC-only opt-out, document hashes, bundled company preview/apply, repeat-start reuse, shutdown, ownership reacquisition, registration persistence, session revocation, demo reset, private-file allowlist'
   } | ConvertTo-Json
 } finally {
   if ($started) { & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $stop }

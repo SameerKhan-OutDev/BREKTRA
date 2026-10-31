@@ -202,3 +202,46 @@ test("guided setup API checks without writing, connects once, reports progress a
     if (previousOrigin === undefined) delete process.env.OLLAMA_URL; else process.env.OLLAMA_URL = previousOrigin;
   }
 });
+
+test("empty Sheets activation retains login identities, excludes demo messages and persists real team messages across recovery", async () => {
+  const source = demoState();
+  source.members.push({id:"owner-test",name:"Owner",email:"owner@example.invalid",role:"owner",status:"active",createdAt:"2026-10-31T00:00:00Z"});
+  source.members.push({id:"viewer-test",name:"Viewer",email:"viewer@example.invalid",role:"viewer",status:"active",createdAt:"2026-10-31T00:00:00Z"});
+  source.teamMessages.push({id:"demo-message",senderId:"owner-test",recipientId:"viewer-test",body:"Demo only",at:"2026-10-31T00:00:00Z"});
+  const remote = emptyState(), target = targetStore(remote), store = new Store(source);
+  await store.connectSheets(target.adapter, companyFingerprint(source), companyFingerprint(remote),async()=>{});
+  assert.equal(store.state.members.length,2);
+  assert.equal(store.state.leads.length,0); assert.equal(store.state.teamMessages.length,0);
+  await store.change(s => {s.teamMessages.push({id:"real-message",senderId:"owner-test",recipientId:"viewer-test",body:"Saved in Sheets",at:"2026-10-31T00:00:00Z"});});
+  const restarted = new Store(emptyState(),target.adapter); await restarted.recover();
+  assert.equal(restarted.state.members.length,2); assert.equal(restarted.state.teamMessages[0].body,"Saved in Sheets");
+});
+
+test("existing Sheets team cannot replace the signed-in administrator with a same-email identity", async () => {
+  const { TeamAuth } = await import("../server/team.ts");
+  const secrets = new MemorySecrets(), store = new Store(emptyState());
+  const auth = new TeamAuth(store, secrets, false, true);
+  await auth.bootstrap("", "");
+  await auth.register("Owner", "owner@example.invalid", "Owner-Test-Password", true, "owner.test");
+  const owner = store.state.members[0];
+  const token = await auth.login("owner.test", "Owner-Test-Password", "local");
+  const req = {headers:{cookie:`brektra_session=${token}`},socket:{remoteAddress:"127.0.0.1"}} as any;
+  const remote = emptyState(); remote.members = [{...owner,id:"different-owner"}];
+  let persisted = false;
+  const target = targetStore(remote);
+  await assert.rejects(requestContext.run({actorId:owner.id}, () => store.connectSheets(target.adapter,
+    companyFingerprint(store.state), companyFingerprint(remote), async () => {persisted=true;})), /different administrator identity/);
+  assert.equal(target.writes(), 0); assert.equal(persisted, false);
+  assert.equal(store.sheets, undefined); assert.equal(store.workspaceEpoch, 0);
+  assert.equal(auth.status(req).authenticated, true);
+  await auth.login("owner.test", "Owner-Test-Password", "local");
+  // Exact identity in an existing team preserves both session and password.
+  remote.members = [{...owner}]; const compatible = targetStore(remote);
+  await requestContext.run({actorId:owner.id}, () => store.connectSheets(compatible.adapter,
+    companyFingerprint(store.state), companyFingerprint(remote), async () => {}));
+  assert.equal(auth.status(req).authenticated, true);
+  await auth.login("owner.test", "Owner-Test-Password", "local");
+  const restarted = new Store(emptyState(), compatible.adapter); await restarted.recover();
+  const restartedAuth = new TeamAuth(restarted, secrets, false, true); await restartedAuth.bootstrap("", "");
+  await restartedAuth.login("owner.test", "Owner-Test-Password", "local");
+});

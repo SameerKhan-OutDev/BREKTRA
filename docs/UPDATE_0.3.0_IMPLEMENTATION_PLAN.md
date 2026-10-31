@@ -1,6 +1,6 @@
 # BREKTRA update 0.3.0 implementation plan
 
-Current release: **0.4.0** (major 0 · update 4 · patch 0).
+Current release: **0.12.3** (major 0 · update 12 · patch 2). See [version history](../CHANGELOG.md).
 
 Roadmap target: shared-company platform. Status: implementation authorized 27 October 2026; first 0.3.0 company-preparation milestone implemented. Multi-company operation remains disabled.
 Prepared: 26 October 2026 (Asia/Karachi).

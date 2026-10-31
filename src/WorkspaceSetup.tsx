@@ -6,6 +6,7 @@ import { featureApi as api, usePermission, type Action } from "./access";
 
 export function WorkspaceSetup({ workspace, action, busy }: { workspace: Workspace; action: Action; busy: boolean }) {
   const manage = usePermission("manage");
+  const remoteSetup = !["127.0.0.1", "localhost", "[::1]"].includes(location.hostname) && !workspace.health.hosted;
   const [status, setStatus] = useState<SetupStatus>();
   const [error, setError] = useState("");
   const [spreadsheet, setSpreadsheet] = useState("");
@@ -16,9 +17,11 @@ export function WorkspaceSetup({ workspace, action, busy }: { workspace: Workspa
   const [checked, setChecked] = useState<SheetsSetupCheck>();
   const [confirmed, setConfirmed] = useState(false);
   const [selectedModel, setSelectedModel] = useState(workspace.health.ollama.model);
+  const [startingAI, setStartingAI] = useState(false);
+  const [aiError, setAIError] = useState("");
   const refresh = async () => { const next = await api<SetupStatus>("/setup"); setStatus(next); return next; };
   useEffect(() => {
-    if (!manage) return;
+    if (!manage || remoteSetup) return;
     let active = true, timer: ReturnType<typeof setTimeout>;
     const poll = async () => {
       try { const next = await api<SetupStatus>("/setup"); if (active) setStatus(next); }
@@ -27,8 +30,10 @@ export function WorkspaceSetup({ workspace, action, busy }: { workspace: Workspa
     };
     void poll();
     return () => { active = false; clearTimeout(timer); credential.current = ""; };
-  }, [manage]);
+  }, [manage, remoteSetup]);
   if (!manage) return null;
+  if (remoteSetup)
+    return <section className="panel workspace-setup"><h2>Server setup</h2><p>Open Settings on the computer running BREKTRA to manage spreadsheet credentials and local AI setup.</p></section>;
   const run = (fn: () => Promise<unknown>, message?: string) => action(async () => {
     setError("");
     try { const result = await fn(); await refresh(); return result; }
@@ -101,9 +106,17 @@ export function WorkspaceSetup({ workspace, action, busy }: { workspace: Workspa
         <p>{ai.detail}</p>
         <div className="setup-buttons">
           <a className="button" href="https://ollama.com/download/windows" target="_blank" rel="noreferrer">Install Ollama <ExternalLink size={14} /></a>
-          <button className="button" disabled={busy || ai.connected} onClick={() => void run(() => api("/setup/ollama/start", "POST"), "Ollama is running.")}><Play size={14} /> Start Ollama</button>
+          <button className="button" disabled={busy || startingAI || ai.connected} onClick={() => {
+            setStartingAI(true); setAIError("");
+            void run(async () => {
+              try { await api("/setup/ollama/start", "POST"); }
+              catch (e) { setAIError(e instanceof Error ? e.message : "Ollama could not start."); throw e; }
+            }, "Ollama is running.").finally(() => setStartingAI(false));
+          }}>{startingAI ? <Loader2 size={14} className="spin" /> : <Play size={14} />}{startingAI ? "Starting Ollama…" : "Start Ollama"}</button>
           <button className="button" disabled={busy} onClick={() => void run(() => api("/integrations/check", "POST"), "Local AI connection checked.")}><RefreshCw size={14} /> Check connection</button>
         </div>
+        {startingAI && <p role="status" aria-live="polite">Waiting for Ollama to respond…</p>}
+        {aiError && <p className="feature-error" role="alert">{aiError}</p>}
         <label className="field"><span>AI model</span><select value={selectedModel} disabled={busy || downloading} onChange={(e) => setSelectedModel(e.target.value)}>{models.map((model) => <option key={model} value={model}>{model}{ai.models.includes(model) ? " · installed" : model === "qwen3:4b" ? " · standard" : model === "qwen3:1.7b" ? " · smaller download" : ""}</option>)}</select></label>
         <div className="setup-buttons">
           <button className="button" disabled={busy || !ai.connected || downloading || !downloadableModels.some((m) => m === selectedModel)} onClick={() => void run(() => api("/setup/ollama/pull", "POST", { model: selectedModel }))}><Download size={14} /> Download model</button>

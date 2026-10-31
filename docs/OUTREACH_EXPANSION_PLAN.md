@@ -1,6 +1,6 @@
 # Outreach and hosted workspace implementation
 
-Current release: **0.4.0** (major 0 · update 4 · patch 0). See [version history](../CHANGELOG.md).
+Current release: **0.12.3** (major 0 · update 12 · patch 2). See [version history](../CHANGELOG.md).
 
 Authorized 25 October 2026 (Asia/Karachi). This extends the original backend scope to sequences, Gmail outreach, an inbox, sourced enrichment and team access. Gmail/Google Workspace is the first mail provider. The user chose a single hosted workspace server with browser access and Ollama on that server. Google Sheets remains the persistent application database.
 
@@ -36,7 +36,7 @@ First release: explicit public company-page lookup and email-domain MX checks. P
 
 ## Hosted teams
 
-One hosted process controls one workspace/control spreadsheet and runs all jobs. Teammates use browsers against that same server. This replaces simultaneous desktop writers; no horizontally scaled writers or distributed Sheets locking is claimed. The local portable app stays loopback-only by default. Hosted mode is explicit and requires a configured HTTPS public origin, Sheets mode and authentication before exposing workspace data. TLS terminates at a trusted reverse proxy; do not trust arbitrary forwarded headers.
+One hosted process controls one workspace/control spreadsheet and runs all jobs. Teammates use browsers against that same server. This replaces simultaneous desktop writers; no horizontally scaled writers or distributed Sheets locking is claimed. The portable launcher enables trusted LAN access by default as of 0.8.0; BREKTRA_LAN=0 keeps it PC-only. Hosted mode is explicit and requires a configured HTTPS public origin, Sheets mode and authentication before exposing workspace data. TLS terminates at a trusted reverse proxy; do not trust arbitrary forwarded headers.
 
 Store member profiles/roles and invitation records in Sheets; password hashes/session material are private infrastructure. Roles: owner, admin, operator, reviewer and viewer. Owners/admins manage membership, operators manage campaigns/leads and prepare work, reviewers can approve/reject exact drafts, viewers read only. Prevent removal of the last owner. Invitations are expiring, single-use links accepted by the invited person; no email is sent automatically. Sessions use HttpOnly cookies, expiry and revocation on member removal or password changes. Use origin checks, login throttling and no-cache responses. Log actor IDs for important changes.
 

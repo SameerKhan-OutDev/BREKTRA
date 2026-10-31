@@ -99,6 +99,19 @@ test("Sheets persistence safety", async (t) => {
       assert.equal(restored.accounts.length, 6);
       assert.equal(restored.accounts.find((a) => a.id === "a-3")!.dailyBudget, 11);
     });
+    await t.test("member usernames persist through the Sheets adapter and duplicate handles fail closed", async () => {
+      reset();
+      const adapter = new Sheets(credentials, "control-test"), s = emptyState();
+      await adapter.initialize();
+      s.members.push({id:"owner",name:"Owner",email:"owner@example.invalid",username:"owner.name",role:"owner",status:"active",createdAt:now()});
+      await adapter.save(s);
+      const restored = await new Sheets(credentials, "control-test").initialize();
+      assert.equal(restored.members[0].username, "owner.name");
+      restored.members.push({id:"viewer",name:"Viewer",email:"viewer@example.invalid",username:"OWNER.NAME",role:"viewer",status:"disabled",createdAt:now()});
+      const before = writes.length;
+      await assert.rejects(adapter.save(restored), /duplicate team usernames/);
+      assert.equal(writes.length, before);
+    });
     await t.test("legacy records migrate without losing context and unknown versions fail before a write", async () => {
       reset();
       const legacy: any = demoState();

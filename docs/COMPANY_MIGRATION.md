@@ -1,6 +1,6 @@
 # Company ownership preparation
 
-Current release: **0.4.0** (major 0 · update 4 · patch 0).
+Current release: **0.12.3** (major 0 · update 12 · patch 2). See [version history](../CHANGELOG.md).
 
 27 October 2026 (Asia/Karachi). First implementation milestone of the [0.3.0 roadmap](UPDATE_0.3.0_IMPLEMENTATION_PLAN.md).
 

@@ -1,6 +1,6 @@
 # Workspace storage, upgrades and recovery
 
-Current release: **0.4.0** (major 0 · update 4 · patch 0). See [version history](../CHANGELOG.md).
+Current release: **0.12.3** (major 0 · update 12 · patch 2). See [version history](../CHANGELOG.md).
 
 Stage 1 implementation, 25 October 2026 (Asia/Karachi). Google Sheets remains the only persistent application database. Demo mode is deliberately in memory.
 
@@ -48,3 +48,7 @@ Collection inspection/deletion, exclusions, retention, reviewed anonymized expor
 ## Validation boundaries
 
 Automated tests use a stateful mocked Google endpoint and mock/template inference. They cover migration, row deltas/deletion/growth, invalid saved state, external conflicts, accepted-but-unacknowledged/rejected writes, restart, local overlapping mutations, ownership, budget reservations, cancellation and collection/review behavior. This is not live Google Sheets or Ollama validation. Dedicated service-account/control-sheet tests, actual model inference and authenticated LinkedIn tests remain outstanding.
+
+## Local authentication infrastructure (0.10.0)
+
+In demo mode, registered identities, roles, approval/deletion state and invitation metadata are stored with password hashes in `.runtime/private.enc`, protected by the existing server key (Windows user protection in portable mode). Sessions remain memory-only and expire on restart. CRM records and team messages are not stored locally. Sheets-connected teams remain authoritative and never restore local identities over existing Sheets members. Empty Sheets activation retains current identities as before. Preserve `.runtime` in place during upgrades; never distribute it. Older demo identities already cleared on restart cannot be reconstructed safely from password hashes.

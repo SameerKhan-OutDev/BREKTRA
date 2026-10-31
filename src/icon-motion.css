@@ -1,0 +1,8 @@
+/* Only interactive icons receive click feedback; status spinners retain their own animation. */
+:where(button, a[href], summary, [role="button"]) svg.lucide { transform-box: fill-box; transform-origin: center; }
+:where(button, a[href], summary, [role="button"]) svg.lucide :is(path, line, circle, rect) { transform-box: fill-box; transform-origin: center; }
+.team-role-guide summary > svg:last-child, .team-access summary > svg:last-child, .team-security summary > svg:last-child { transition: transform .2s ease; }
+@media (prefers-reduced-motion: reduce) {
+  :where(button, a[href], summary, [role="button"]) svg.lucide,
+  :where(button, a[href], summary, [role="button"]) svg.lucide * { transition: none !important; }
+}

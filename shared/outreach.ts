@@ -6,8 +6,8 @@ export const permits = (role: TeamRole, permission: Permission) =>
   (permission === "operate" && role === "operator") ||
   (permission === "review" && (role === "operator" || role === "reviewer"));
 export interface Member {
-  id: string; name: string; email: string; role: TeamRole;
-  status: "active" | "invited" | "disabled"; createdAt: string;
+  id: string; name: string; email: string; username?: string; role: TeamRole;
+  status: "active" | "invited" | "disabled"; createdAt: string; pendingApproval?: boolean; deletedAt?: string;
 }
 export interface Invitation extends CompanyOwned {
   id: string; memberId: string; expiresAt: string; acceptedAt?: string;
@@ -66,6 +66,10 @@ export interface Enrichment extends CompanyOwned {
   status: "pending" | "accepted" | "rejected";
 }
 export interface AuthStatus {
-  required: boolean; authenticated: boolean; hosted: boolean;
-  user: { id: string; name: string; email: string; role: TeamRole } | null;
+  required: boolean; authenticated: boolean; hosted: boolean; setupRequired?: boolean; canSetup?: boolean; demo?: boolean;
+  user: { id: string; name: string; email: string; username?: string; role: TeamRole } | null;
+}
+
+export interface TeamMessage {
+  id: string; senderId: string; recipientId: string; body: string; at: string;
 }

@@ -1,9 +1,9 @@
 # BREKTRA implementation plan
 
-Current release: **0.4.0** (major 0 · update 4 · patch 0). See [version history](../CHANGELOG.md).
+Current release: **0.12.3** (major 0 · update 12 · patch 2). See [version history](../CHANGELOG.md).
 
 Updated: 25 October 2026 (Asia/Karachi).
-Status: implementation started with stage 1. See `IMPLEMENTATION_STATUS.md` for delivered behavior and validation limits. Live LinkedIn integration remains unavailable.
+Status: implementation started with stage 1. See `IMPLEMENTATION_STATUS.md` for delivered behavior and validation limits. Live LinkedIn outreach remains unavailable; 0.5.0 implements OAuth/OIDC account connection pending real-provider validation.
 
 27 October 2026 extension: implementation of the [twelve-shard company roadmap](UPDATE_0.3.0_IMPLEMENTATION_PLAN.md) has started. The first 0.3.0 build adds [reviewed single-company preparation](COMPANY_MIGRATION.md); multiple companies remain blocked pending complete isolation. The new specification requires a compliant, authorized integration before enabling live LinkedIn; earlier stages below do not override that gate. No new live LinkedIn capability is delivered.
 
@@ -31,6 +31,10 @@ LinkedIn login, real profile checks, live requests/messages, reply detection, so
 Done when: restart, overlapping edits and connection-failure tests preserve progress and cannot cause duplicate sends. Invalid saved data gives a useful error instead of starting campaigns.
 
 ## 2. Connect accounts and services
+
+0.6.0 adds an optional animated walkthrough for the 0.5.0 connection milestone. Administrators see app creation/selection, product access, exact callback copying, protected credential entry and authorization; teammates with a configured app go directly to account authorization. The guide asks before starting, remembers Skip, supports pause/resume and reduced motion, and shows completion only for a current saved connection. External Page/product approval remains explicit and can require waiting; illustrations never claim to control the portal.
+
+0.5.0 implements the account identity milestone using LinkedIn OAuth/OIDC, replacing the earlier proposed browser-session approach for this scope. Administrator setup is once per server; SDRs use Connect LinkedIn, authorize on LinkedIn and return to Settings. Tokens are encrypted server-side, metadata is stored in Sheets, account ownership is enforced, and reconnect cannot silently substitute a different account. Read-only checks run periodically while BREKTRA is running. Revocation/expiry/check failures pause campaigns; reconnect never automatically restarts them. Invitations, messages and reply sync are unavailable without separately approved access. LinkedIn Messages API rules also require a member send action near sending time; earlier scheduled-message plans do not override provider requirements. Real authorization/callback testing remains outstanding.
 
 Local setup portion delivered in 0.4.0: Settings provides Google credential selection, read-only sheet checks, encrypted configuration and activation without restarting, plus installed-Ollama start/download/selection controls. Google authorization/sharing and initial Ollama installation remain user actions. This does not implement LinkedIn sessions or establish live-provider validation. See `LOCAL_SETUP.md`.
 

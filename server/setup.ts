@@ -10,6 +10,7 @@ import type { Store } from "./store.ts";
 import type { TeamAuth } from "./team.ts";
 import { Sheets, type ServiceAccountCredentials } from "./sheets.ts";
 import { aiHealth, ollamaOrigin } from "./ai.ts";
+import { installedOllama } from "./ollama-installation.ts";
 import { companyFingerprint } from "./company.ts";
 import { downloadableModels, type ModelDownload, type SetupStatus } from "../shared/setup.ts";
 
@@ -58,11 +59,7 @@ export class SetupConfiguration {
 export async function startInstalledOllama() {
   if ((await aiHealth()).connected) return;
   if (process.platform !== "win32") throw new Error("Start Ollama on this server, then use Check connection.");
-  const candidates = [
-    process.env.LOCALAPPDATA && join(process.env.LOCALAPPDATA, "Programs", "Ollama", "ollama.exe"),
-    process.env.ProgramFiles && join(process.env.ProgramFiles, "Ollama", "ollama.exe"),
-  ];
-  const executable = candidates.find((p): p is string => !!p && existsSync(p));
+  const executable = installedOllama();
   if (!executable) throw new Error("Install Ollama using the official download button, then try Start Ollama again.");
   await new Promise<void>((resolve, reject) => {
     const child = spawn(executable, ["serve"], { windowsHide: true, stdio: "ignore",

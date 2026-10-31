@@ -19,6 +19,7 @@ function recoverInterrupted(remote: State) {
 }
 export class Store {
   private tail: Promise<unknown> = Promise.resolve();
+  beforeDemoCommit?: (candidate: State) => Promise<void>;
   syncError = "";
   changingWorkspace = false;
   workspaceEpoch = 0;
@@ -113,6 +114,7 @@ export class Store {
           throw e;
         }
       }
+      if (!this.sheets) await this.beforeDemoCommit?.(candidate);
       this.state = candidate;
       return result;
     });
@@ -120,6 +122,7 @@ export class Store {
     return operation;
   }
   async connectSheets(adapter: Sheets, sourceFingerprint: string, targetFingerprint: string, persist: () => Promise<void>) {
+    const actorId = requestContext.getStore()?.actorId;
     if (this.changingWorkspace || this.sheets) throw new Error("A Sheets workspace is already connected or setup is in progress.");
     this.changingWorkspace = true;
     const operation = this.tail.then(async () => {
@@ -130,6 +133,21 @@ export class Store {
       const remote = migrateState(await adapter.initialize());
       assertSingleCompanyRuntime(remote);
       if (companyFingerprint(remote) !== targetFingerprint) throw new Error("The spreadsheet changed since the check. Check it again before connecting.");
+      // Retain the signed-in identity when initializing an empty real workspace.
+      // CRM/demo records are never copied. Existing real teams remain authoritative.
+      if (!remote.members.length && this.state.members.length) {
+        const before = structuredClone(remote);
+        remote.members = structuredClone(this.state.members);
+        maintainSingleCompanyOwnership(before, remote);
+      }
+      // Email equality is not proof of identity. Keep existing Sheets teams
+      // authoritative and refuse activation before saving an inaccessible team.
+      const administrators = this.state.members.filter(m => m.status === "active" && !m.deletedAt &&
+        ["owner", "admin"].includes(m.role) && (!actorId || m.id === actorId));
+      if (administrators.length && !administrators.some(local => remote.members.some(m =>
+        m.id === local.id && m.status === "active" && !m.deletedAt && ["owner", "admin"].includes(m.role))))
+        throw new Error("This spreadsheet belongs to an existing team with a different administrator identity. Connection cancelled to keep you signed in. Use that team's original configured installation or ask the host operator to recover administrator access; matching emails alone cannot transfer access.");
+      validateState(remote);
       recoverInterrupted(remote);
       for (const c of remote.campaigns) if (c.status === "running") c.status = "paused";
       for (const m of remote.mailboxes) m.sendingEnabled = false;

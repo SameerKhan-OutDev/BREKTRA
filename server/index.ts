@@ -1,4 +1,5 @@
 import { APP_VERSION } from "../shared/version.ts";
+import { lanPeer, lanUrls, loopbackPeer } from "./network.ts";
 import "dotenv/config";
 import express from "express";
 import { resolve } from "node:path";
@@ -24,6 +25,9 @@ import { demoState } from "./seed.ts";
 import { Runner } from "./runner.ts";
 import { PrivateStore } from "./private-store.ts";
 import { Gmail } from "./gmail.ts";
+import { LinkedInAuth } from "./linkedin-auth.ts";
+import { linkedInApi, linkedInCallback, checkLinkedInAccount } from "./linkedin-api.ts";
+import { usernameSchema } from "./outreach-schema.ts";
 import { TeamAuth } from "./team.ts";
 import { OutreachEngine, stopLead } from "./outreach.ts";
 import { outreachApi, gmailCallback } from "./outreach-api.ts";
@@ -32,6 +36,7 @@ import { previewCompanyMigration, prepareCompanyMigration } from "./company.ts";
 import { SetupConfiguration, setupApi } from "./setup.ts";
 import type { Health, Relationship } from "../shared/types.ts";
 const hosted = process.env.BREKTRA_HOSTED === "1";
+const lan = !hosted && process.env.BREKTRA_LAN === "1";
 const secrets = new PrivateStore(resolve(".runtime"));
 const useSavedSetup = !hosted && process.env.BREKTRA_USE_ENV !== "1";
 const setupConfiguration = useSavedSetup ? await SetupConfiguration.load(secrets, resolve(".runtime")) : new SetupConfiguration(secrets);
@@ -76,9 +81,10 @@ if (sheets) {
 }
 const app = express();
 app.disable("x-powered-by");
-const auth = new TeamAuth(store, secrets, hosted, hosted || process.env.BREKTRA_AUTH === "1");
+const auth = new TeamAuth(store, secrets, hosted, hosted || lan || process.env.BREKTRA_AUTH !== "0");
 await auth.bootstrap(process.env.BREKTRA_OWNER_EMAIL || "", process.env.BREKTRA_OWNER_PASSWORD || "", process.env.BREKTRA_OWNER_NAME || "Workspace owner", process.env.BREKTRA_RESET_OWNER_PASSWORD === "1");
 const gmail = new Gmail(secrets, publicOrigin.origin);
+const linkedin = new LinkedInAuth(secrets, publicOrigin.origin);
 const outreach = new OutreachEngine(store, gmail);
 const allowedHosts = new Set([
   `127.0.0.1:${port}`,
@@ -87,14 +93,17 @@ const allowedHosts = new Set([
   ...(hosted ? [publicOrigin.host] : []),
 ]);
 app.use((req, res, next) => {
-  if (!allowedHosts.has(req.headers.host || "")) {
-    res.status(403).json({ error: "Local host only." });
+  const host = req.headers.host || "";
+  const networkHosts = lan ? lanUrls(port).map(url => new URL(url).host) : [];
+  if ((!hosted && !loopbackPeer(req.socket.remoteAddress) && !(lan && lanPeer(req.socket.remoteAddress || ""))) ||
+      (!allowedHosts.has(host) && !networkHosts.includes(host))) {
+    res.status(403).json({ error: "This address is not allowed for this workspace." });
     return;
   }
   const origin = req.headers.origin;
   if (origin) {
     try {
-      if (hosted ? new URL(origin).origin !== publicOrigin.origin : !allowedHosts.has(new URL(origin).host)) throw new Error();
+      if (new URL(origin).origin !== (hosted ? publicOrigin.origin : `http://${host}`)) throw new Error();
     } catch {
       res.status(403).json({ error: "Cross-origin requests are not allowed." });
       return;
@@ -134,6 +143,9 @@ const inboxTimer = setInterval(() => {
   if (pollingMail || store.syncError || store.changingWorkspace) return;
   pollingMail = true;
   void (async () => {
+    for (const account of store.state.accounts.filter((a) => a.linkedin && a.linkedin.status !== "disconnected" &&
+      (Date.parse(a.linkedin.checkedAt) < Date.now() - 900000 || (a.linkedin.status === "connected" && Date.parse(a.linkedin.expiresAt) <= Date.now()))))
+      await checkLinkedInAccount(store, linkedin, account.id).catch(() => {});
     for (const mailbox of store.state.mailboxes.filter((m) => m.provider === "gmail" && m.status === "connected" && !m.syncError))
       await outreach.sync(mailbox.id).catch(() => {});
   })().finally(() => { pollingMail = false; });
@@ -152,7 +164,7 @@ const health = (): Health => ({
   linkedin: {
     connected: false,
     detail:
-      "Browser integration is not implemented. Live sending is unavailable.",
+      "Connect your LinkedIn account in Settings. Account connection does not enable live invitations or messaging.",
   },
   timezone: "Asia/Karachi",
   startedAt,
@@ -174,24 +186,34 @@ app.get("/api/health", (_req, res) =>
   res.json({ app: "BREKTRA", version: APP_VERSION, workspaceId, pid: process.pid }),
 );
 app.get("/api/auth/status", (req, res) => res.json(auth.status(req)));
+app.post("/api/auth/register", async (req, res) => {
+  ready(); auth.limitRegistration(req.socket.remoteAddress || "local");
+  const input = z.object({ name: z.string().trim().min(2).max(100), email: z.email(), username: usernameSchema.optional(), password: z.string().min(12).max(200) }).strict().parse(req.body);
+  const first = await auth.register(input.name, input.email, input.password, loopbackPeer(req.socket.remoteAddress), input.username);
+  res.status(201).json({ pending: !first });
+});
 app.post("/api/auth/login", async (req, res) => {
-  const input = z.object({ email: z.email(), password: z.string().min(1).max(200) }).parse(req.body);
-  const token = await auth.login(input.email, input.password, req.socket.remoteAddress || "local");
+  const input = z.object({ identifier: z.string().trim().min(1).max(320).optional(), email: z.string().trim().min(1).max(320).optional(), password: z.string().min(1).max(200) }).refine(v => !!(v.identifier || v.email), "Enter your username or email.").parse(req.body);
+  const token = await auth.login(input.identifier || input.email!, input.password, req.socket.remoteAddress || "local");
   auth.setCookie(res, token);
   res.json({ ok: true });
 });
 app.post("/api/auth/logout", (req, res) => { auth.logout(req, res); res.json({ ok: true }); });
 app.post("/api/auth/accept", async (req, res) => {
-  const input = z.object({ token: z.string().min(20).max(200), password: z.string().min(12).max(200) }).parse(req.body);
-  ready(); await auth.accept(input.token, input.password); res.json({ ok: true });
+  const input = z.object({ token: z.string().min(20).max(200), username: usernameSchema.optional(), password: z.string().min(12).max(200) }).parse(req.body);
+  ready(); await auth.accept(input.token, input.password, input.username); res.json({ ok: true });
 });
 app.get("/api/gmail/callback", async (req, res) => { ready(); await gmailCallback(store, gmail, req, res); });
+app.get("/api/linkedin/callback", async (req, res) => { await linkedInCallback(store, linkedin, auth, req, res); });
 app.use("/api", (req, _res, next) => {
   try {
     auth.require(req);
     // New feature routes apply their own finer-grained permissions below. These
     // guards protect all pre-existing mutations from direct API access as well.
     if (!["GET", "HEAD"].includes(req.method)) {
+      const selectedAccountId = req.body?.accountId || (/^\/campaigns\/[^/]+/.test(req.path) ? store.state.campaigns.find((c) => c.id === req.path.split("/")[2])?.accountId : undefined);
+      const selectedAccount = store.state.accounts.find((a) => a.id === selectedAccountId);
+      if (selectedAccount?.linkedin && selectedAccount.linkedin.ownerId !== auth.require(req).id) throw Object.assign(new Error("Choose your own LinkedIn account for campaign work."), { status: 403 });
       if (/^\/(accounts|integrations|settings)(\/|$)/.test(req.path)) auth.require(req, "manage");
       else if (/^\/sheets(\/|$)/.test(req.path)) auth.require(req, "operate");
       else if (/^\/drafts(\/|$)/.test(req.path)) auth.require(req, "review");
@@ -200,8 +222,17 @@ app.use("/api", (req, _res, next) => {
     requestContext.run({ actorId: auth.require(req).id, workspaceEpoch: store.workspaceEpoch }, next);
   } catch (error) { next(error); }
 });
-app.use("/api", outreachApi(store, gmail, secrets, outreach, auth));
-app.use("/api", setupApi({ configuration: setupConfiguration, store, auth, local: useSavedSetup && !auth.required, refreshAI,
+app.use("/api", outreachApi(store, gmail, secrets, outreach, auth, () => ({lan, urls: lan ? lanUrls(port) : []})));
+app.use("/api", linkedInApi(store, linkedin, auth));
+app.get("/api/network", (_req, res) => res.json({ lan, hosted, urls: lan ? lanUrls(port) : [], authenticated: auth.required }));
+app.use("/api/setup", (req, res, next) => {
+  if (!hosted && !loopbackPeer(req.socket.remoteAddress)) {
+    res.status(403).json({ error: "Open Settings on the computer running BREKTRA to manage server setup." });
+    return;
+  }
+  next();
+});
+app.use("/api", setupApi({ configuration: setupConfiguration, store, auth, local: useSavedSetup && !hosted, refreshAI,
   connect: async (adapter, source, target, connection) => {
     if (store.sheets || !connection) throw new Error("A Sheets workspace is already configured.");
     const release = await acquireLock(`sheets:${adapter.controlId}`);
@@ -211,9 +242,17 @@ app.use("/api", setupApi({ configuration: setupConfiguration, store, auth, local
     mode = "sheets";
   },
 }));
-app.get("/api/workspace", (_req, res) =>
-  res.json({ state: store.state, health: health(), auth: auth.status(_req) }),
-);
+app.get("/api/workspace", (req, res) => {
+  const actor = auth.require(req), manage = ["owner", "admin"].includes(actor.role);
+  const state = { ...store.state,
+    members: store.state.members.filter(m => manage || (m.status === "active" && !m.deletedAt)),
+    teamMessages: store.state.teamMessages.filter(m => m.senderId === actor.id || m.recipientId === actor.id),
+    invitations: [],
+    trainingExamples: manage ? store.state.trainingExamples : [],
+    trainingFeedback: manage ? store.state.trainingFeedback : [],
+  };
+  res.json({ state, health: health(), auth: auth.status(req) });
+});
 app.get("/api/jobs", (_req, res) =>
   res.json(
     store.state.jobs.map((j) => ({
@@ -735,9 +774,9 @@ if (process.argv.includes("--production")) {
   });
   app.use(vite.middlewares);
 }
-const server = app.listen(port, hosted ? (process.env.BREKTRA_BIND_HOST || "127.0.0.1") : "127.0.0.1", () =>
+const server = app.listen(port, hosted ? (process.env.BREKTRA_BIND_HOST || "127.0.0.1") : lan ? "0.0.0.0" : "127.0.0.1", () =>
   console.log(
-    `\n  BREKTRA ${APP_VERSION} · http://127.0.0.1:${port}\n  Storage: ${mode} · LinkedIn sending disabled\n`,
+    `\n  BREKTRA ${APP_VERSION} · http://127.0.0.1:${port}\n  Storage: ${mode} · LinkedIn sending disabled\n${lan ? `  LAN: ${lanUrls(port).join(" · ")}\n` : ""}`,
   ),
 );
 function stop() {

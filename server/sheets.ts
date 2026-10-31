@@ -28,6 +28,7 @@ export const collections = {
   enrichments: "Enrichment",
   members: "Members",
   invitations: "Invitations",
+  teamMessages: "TeamMessages",
 } as const;
 export const quoteTab = (tab: string) => `'${tab.replaceAll("'", "''")}'`;
 export interface ServiceAccountCredentials { type: "service_account"; client_email: string; private_key: string }

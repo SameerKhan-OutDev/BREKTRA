@@ -17,7 +17,7 @@ export function emptyState(): State {
     trainingExamples: [],
     trainingFeedback: [],
     mailboxes: [], sequences: [], enrollments: [], outreachActions: [], outreachReviews: [],
-    conversations: [], messages: [], enrichments: [], members: [], invitations: [],
+    conversations: [], messages: [], enrichments: [], members: [], invitations: [], teamMessages: [],
   };
 }
 export function profileUrl(value: string): string {
